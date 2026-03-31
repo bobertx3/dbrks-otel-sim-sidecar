@@ -2,6 +2,13 @@
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
+
 RANGE_MAP = {
     "5m": 5,
     "15m": 15,
@@ -19,11 +26,6 @@ COLLECTORS = {
         "signals": ["logs"],
         "tables": {"logs": "telemetry.otel.fluentbit_otel_logs_v2"},
     },
-    "telegraf": {
-        "label": "Telegraf",
-        "signals": ["metrics"],
-        "tables": {"metrics": "telemetry.otel.telegraf_otel_metrics"},
-    },
     "alloy": {
         "label": "Grafana Alloy",
         "signals": ["logs", "metrics", "traces"],
@@ -32,6 +34,11 @@ COLLECTORS = {
             "metrics": "telemetry.otel.alloy_otel_metrics",
             "traces": "telemetry.otel.alloy_otel_spans_v2",
         },
+    },
+    "telegraf": {
+        "label": "Telegraf",
+        "signals": ["metrics"],
+        "tables": {"metrics": "telemetry.otel.telegraf_otel_metrics"},
     },
     "vector": {
         "label": "Vector",
@@ -45,6 +52,15 @@ COLLECTORS = {
             "logs": "telemetry.otel.otelcol_otel_logs_v2",
             "metrics": "telemetry.otel.otelcol_otel_metrics",
             "traces": "telemetry.otel.otelcol_otel_spans_v2",
+        },
+    },
+    "direct": {
+        "label": "Direct",
+        "signals": ["logs", "metrics", "traces"],
+        "tables": {
+            "logs": os.getenv("OTEL_DIRECT_LOGS_TABLE", "telemetry.otel.direct_otel_logs_v2"),
+            "metrics": os.getenv("OTEL_DIRECT_METRICS_TABLE", "telemetry.otel.direct_otel_metrics"),
+            "traces": os.getenv("OTEL_DIRECT_SPANS_TABLE", "telemetry.otel.direct_otel_spans_v2"),
         },
     },
 }

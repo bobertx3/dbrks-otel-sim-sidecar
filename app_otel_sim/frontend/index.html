@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>EO Telemetry Simulator</title>
+    <title>OTel Simulator</title>
     <link rel="stylesheet" href="/static/styles.css?v=19" />
   </head>
   <body>
@@ -12,8 +12,8 @@
       <!-- Header -->
       <header class="topbar">
         <div>
-          <h1>EO Telemetry Simulator</h1>
-          <p>Data Center OTel Simulator — Traces, Logs, Metrics to Databricks</p>
+          <h1>OTel Simulator</h1>
+          <p>Traces, Logs, Metrics to Databricks Unity Catalog</p>
         </div>
         <div class="topbar-right">
           <button type="button" class="dataflow-btn" id="btn-dataflow">Data Flow</button>
@@ -25,16 +25,16 @@
       <!-- Stats bar -->
       <div class="stats-bar" id="stats-bar">
         <div class="stat-card">
-          <div class="stat-value" id="stat-total">0</div>
-          <div class="stat-label">Events Sent</div>
+          <div class="stat-value" id="stat-traces">0</div>
+          <div class="stat-label">Traces</div>
         </div>
         <div class="stat-card">
-          <div class="stat-value" id="stat-rps">0</div>
-          <div class="stat-label">Events / sec</div>
+          <div class="stat-value" id="stat-logs">0</div>
+          <div class="stat-label">Logs</div>
         </div>
         <div class="stat-card">
-          <div class="stat-value" id="stat-incidents">0</div>
-          <div class="stat-label">Incidents</div>
+          <div class="stat-value" id="stat-metrics">0</div>
+          <div class="stat-label">Metrics</div>
         </div>
         <div class="stat-card">
           <div class="stat-value" id="stat-connection">
@@ -44,13 +44,35 @@
         </div>
       </div>
 
-      <!-- Sidecar Collectors status bar -->
-      <div class="sidecar-bar hidden" id="sidecar-bar">
+      <!-- OTel Collectors bar -->
+      <div class="sidecar-bar" id="sidecar-bar">
         <div class="sidecar-header">
-          <span class="sidecar-title">Sidecar Collectors</span>
+          <span class="sidecar-title">OTel Collectors</span>
           <span class="sidecar-mode-pill" id="sidecar-mode-pill">SIDECAR MODE</span>
+          <div class="sidecar-toggle-wrap">
+            <label class="sidecar-toggle" title="Toggle sidecar mode on/off">
+              <input type="checkbox" id="sidecar-toggle-cb" checked />
+              <span class="sidecar-toggle-slider"></span>
+            </label>
+            <span class="sidecar-toggle-label" id="sidecar-toggle-label">ON</span>
+          </div>
+          <span class="sidecar-route-info" id="sidecar-route-info"></span>
         </div>
         <div class="sidecar-cards" id="sidecar-cards"></div>
+        <!-- Direct Telemetry Stream (shown in direct mode, hidden in sidecar mode) -->
+        <section class="event-stream-section" id="telemetry-stream-section" style="display:none">
+          <div class="stream-header">
+            <h3>Direct Telemetry Stream</h3>
+            <span class="event-count" id="event-count">0 events</span>
+            <button id="btn-legend" type="button" class="legend-btn">Legend</button>
+            <button id="clear-log" type="button" class="clear-btn">Clear</button>
+          </div>
+          <div class="event-stream-container" id="event-stream">
+            <div class="stream-empty" id="stream-empty">
+              Click a hotspot or start streaming to see events here
+            </div>
+          </div>
+        </section>
       </div>
 
       <!-- Mode & controls bar -->
@@ -87,21 +109,6 @@
         <div id="settings-container"></div>
       </div>
 
-      <!-- Event Stream (bottom of page) -->
-      <section class="event-stream-section">
-        <div class="stream-header">
-          <h3>Event Stream</h3>
-          <span class="event-count" id="event-count">0 events</span>
-          <button id="btn-legend" type="button" class="legend-btn">Legend</button>
-          <button id="clear-log" type="button" class="clear-btn">Clear</button>
-        </div>
-        <div class="event-stream-container" id="event-stream">
-          <div class="stream-empty" id="stream-empty">
-            Click a hotspot or start streaming to see events here
-          </div>
-        </div>
-      </section>
-
     </div>
 
     <!-- Data Flow Modal -->
@@ -111,9 +118,15 @@
         <div class="dataflow-top">
           <div>
             <h2 class="dataflow-title">Telemetry Data Flow</h2>
-            <p class="dataflow-subtitle">How telemetry flows from the OTel SDK through sidecar collectors to Databricks Unity Catalog</p>
+            <p class="dataflow-subtitle">How telemetry flows from the OTel SDK to Databricks Unity Catalog</p>
           </div>
           <button type="button" class="df-expand-btn" id="btn-expand-all">Expand</button>
+        </div>
+
+        <!-- Path label: Sidecar Mode -->
+        <div class="df-path-label">
+          <span class="df-path-dot" style="background:#be85ff"></span>
+          <strong>Sidecar Mode</strong> — App → Local Collectors → Databricks
         </div>
 
         <div class="dataflow-pipeline">
@@ -149,7 +162,7 @@
                 <span class="df-sub-dot" style="background:var(--network)"></span>
                 <div>
                   <div class="df-sub-label">Metrics</div>
-                  <div class="df-sub-detail">OTLPMetricExporter (gRPC) → localhost:4319</div>
+                  <div class="df-sub-detail">OTLPMetricExporter → localhost:4320</div>
                 </div>
               </div>
             </div>
@@ -191,7 +204,7 @@
                 <span class="df-sub-dot" style="background:var(--network)"></span>
                 <div>
                   <div class="df-sub-label">Telegraf <span style="color:var(--muted);font-weight:400">:4319</span></div>
-                  <div class="df-sub-detail">Metrics</div>
+                  <div class="df-sub-detail">Metrics (gauges &amp; sums only)</div>
                 </div>
               </div>
               <div class="df-sub-item app-accent">
@@ -321,6 +334,80 @@
             </div>
           </div>
         </div>
+
+        <!-- Path label: Direct Mode -->
+        <div class="df-path-label" style="margin-top:24px">
+          <span class="df-path-dot" style="background:#ff3621"></span>
+          <strong>Direct Mode</strong> — App → Databricks (no sidecars)
+        </div>
+
+        <div class="dataflow-pipeline">
+          <!-- Box 1: OTel Simulator App (Direct) -->
+          <div class="df-stage df-stage-blue">
+            <div class="df-stage-number">1</div>
+            <div class="df-stage-header">
+              <span class="df-stage-icon">&#128225;</span>
+              <span class="df-stage-label">OTel Simulator App</span>
+            </div>
+            <div class="df-stage-subtitle">OpenTelemetry Python SDK — Direct Export</div>
+            <ul class="df-value-points">
+              <li><span class="df-vp-dot blue"></span>OTLP/HTTP Exporters</li>
+              <li><span class="df-vp-dot blue"></span>Traces, Logs &amp; Metrics</li>
+              <li><span class="df-vp-dot blue"></span>Direct to Databricks OTLP</li>
+            </ul>
+          </div>
+
+          <!-- Arrow (skip sidecars) -->
+          <div class="df-pipe">
+            <div class="df-pipe-track">
+              <div class="df-pipe-line" style="background:linear-gradient(90deg, rgba(38,54,91,0.3), #ff3621, rgba(38,54,91,0.3))"></div>
+              <div class="df-particle p1"></div>
+              <div class="df-particle p2"></div>
+            </div>
+            <div class="df-pipe-label">OTLP/HTTP (TLS)</div>
+          </div>
+
+          <!-- Box 2: Zerobus Ingest -->
+          <div class="df-stage df-stage-orange">
+            <div class="df-stage-number orange">2</div>
+            <div class="df-stage-header">
+              <span class="df-stage-icon">&#9889;</span>
+              <span class="df-stage-label">Zerobus Ingest</span>
+            </div>
+            <div class="df-stage-subtitle">High-throughput ingestion</div>
+            <ul class="df-value-points">
+              <li><span class="df-vp-dot orange"></span>Schema validation</li>
+              <li><span class="df-vp-dot orange"></span>UC table routing</li>
+              <li><span class="df-vp-dot orange"></span>Back-pressure handling</li>
+            </ul>
+          </div>
+
+          <!-- Arrow -->
+          <div class="df-pipe">
+            <div class="df-pipe-track">
+              <div class="df-pipe-line" style="background:linear-gradient(90deg, rgba(38,54,91,0.3), #ff3621, rgba(38,54,91,0.3))"></div>
+              <div class="df-particle p1"></div>
+              <div class="df-particle p2"></div>
+            </div>
+            <div class="df-pipe-label">UC Routing</div>
+          </div>
+
+          <!-- Box 3: Unity Catalog (Direct tables) -->
+          <div class="df-stage df-stage-green">
+            <div class="df-stage-number green">3</div>
+            <div class="df-stage-header">
+              <span class="df-stage-icon">&#9651;</span>
+              <span class="df-stage-label">Unity Catalog</span>
+            </div>
+            <div class="df-stage-subtitle">Direct tables — no sidecar prefix</div>
+            <ul class="df-value-points">
+              <li><span class="df-vp-dot green"></span>direct_otel_spans_v2</li>
+              <li><span class="df-vp-dot green"></span>direct_otel_logs_v2</li>
+              <li><span class="df-vp-dot green"></span>direct_otel_metrics</li>
+            </ul>
+          </div>
+        </div>
+
       </div>
     </section>
 

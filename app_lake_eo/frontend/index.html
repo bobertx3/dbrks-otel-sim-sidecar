@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>LakeEO — Enterprise Observability</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="app-container">
+
+      <!-- Header -->
+      <header class="topbar">
+        <div style="display:flex;align-items:center;gap:12px">
+          <img src="/static/lakeview-icon.png" alt="LakeEO" style="width:40px;height:40px;border-radius:8px">
+          <div>
+          <h1>LakeEO — Enterprise Observability</h1>
+          <p>Multi-collector telemetry flowing into Databricks Unity Catalog &middot; <code>telemetry.otel</code></p>
+          </div>
+        </div>
+        <div class="topbar-right">
+          <button type="button" class="dataflow-link" id="btn-dataflow">Data Flow</button>
+          <select id="time-range" class="range-select">
+            <option value="5m">5 min</option>
+            <option value="15m">15 min</option>
+            <option value="30m" selected>30 min</option>
+            <option value="1h">1 hour</option>
+            <option value="6h">6 hours</option>
+            <option value="24h">24 hours</option>
+            <option value="all">All</option>
+          </select>
+          <button type="button" class="refresh-btn" id="btn-refresh">Refresh</button>
+          <div class="status-pill" id="health-pill">Checking...</div>
+          <button type="button" class="theme-toggle" id="theme-toggle" title="Toggle light/dark mode">&#9790;</button>
+        </div>
+      </header>
+
+      <!-- Collector Tiles -->
+      <div class="collector-tiles" id="collector-tiles"></div>
+
+      <!-- Traces Section -->
+      <section class="signal-section">
+        <div class="section-header">
+          <h2 class="section-title traces-accent">Traces</h2>
+          <span class="section-subtitle">Span timelines from Grafana Alloy &amp; OTel Collector</span>
+        </div>
+        <div class="collector-columns" id="traces-section"></div>
+      </section>
+
+      <!-- Logs Section -->
+      <section class="signal-section">
+        <div class="section-header">
+          <h2 class="section-title logs-accent">Logs</h2>
+          <span class="section-subtitle">Structured log records from Fluent Bit, Vector, Grafana Alloy &amp; OTel Collector</span>
+        </div>
+        <div class="collector-columns" id="logs-section"></div>
+      </section>
+
+      <!-- Metrics Section -->
+      <section class="signal-section">
+        <div class="section-header">
+          <h2 class="section-title metrics-accent">Metrics</h2>
+          <span class="section-subtitle">Counters &amp; histograms from Telegraf, Grafana Alloy &amp; OTel Collector</span>
+        </div>
+        <div class="collector-columns" id="metrics-section"></div>
+      </section>
+
+      <!-- Direct Mode Section -->
+      <section class="signal-section" id="direct-section">
+        <div class="section-header">
+          <h2 class="section-title direct-accent">Direct to Databricks</h2>
+          <span class="section-subtitle">Telemetry sent directly from the OTel SDK — no sidecar collectors</span>
+        </div>
+        <div class="direct-columns" id="direct-columns"></div>
+      </section>
+
+    </div>
+
+    <!-- Trace Detail Modal -->
+    <section id="trace-modal" class="modal hidden" aria-hidden="true">
+      <div class="modal-card trace-detail-card">
+        <button type="button" id="close-trace-modal" class="close-btn">x</button>
+        <h2 id="trace-modal-title">Trace Timeline</h2>
+        <div id="trace-timeline" class="trace-timeline"></div>
+        <pre id="trace-spans-raw" class="raw-json"></pre>
+      </div>
+    </section>
+
+    <!-- Detail Modal (raw JSON) -->
+    <section id="detail-modal" class="modal hidden" aria-hidden="true">
+      <div class="modal-card">
+        <button type="button" id="close-detail-modal" class="close-btn">x</button>
+        <h2 id="detail-modal-title">Raw Telemetry</h2>
+        <div id="detail-modal-content" class="raw-json"></div>
+      </div>
+    </section>
+
+    <!-- Data Flow Modal -->
+    <section id="dataflow-modal" class="modal hidden" aria-hidden="true">
+      <div class="modal-card dataflow-card">
+        <button type="button" id="close-dataflow" class="close-btn">x</button>
+        <div class="dataflow-top">
+          <div>
+            <h2 class="dataflow-title">Telemetry Data Flow</h2>
+            <p class="dataflow-subtitle">How telemetry flows from the OTel SDK to Databricks Unity Catalog</p>
+          </div>
+          <button type="button" class="df-expand-btn" id="btn-expand-all">Expand</button>
+        </div>
+
+        <!-- Sidecar path -->
+        <div class="df-path-label"><span class="df-path-dot" style="background:#be85ff"></span><strong>Sidecar Mode</strong> &#8212; App &#8594; Local Collectors &#8594; Databricks</div>
+        <div class="dataflow-pipeline">
+          <div class="df-stage df-stage-blue" data-stage="s-app">
+            <div class="df-stage-number">1</div>
+            <div class="df-stage-header"><span class="df-stage-icon">&#128225;</span><span class="df-stage-label">OTel Simulator App</span></div>
+            <div class="df-stage-subtitle">OpenTelemetry Python SDK</div>
+            <ul class="df-value-points">
+              <li><span class="df-vp-dot blue"></span>OTLP/HTTP &amp; gRPC Exporters</li>
+              <li><span class="df-vp-dot blue"></span>Traces, Logs &amp; Metrics</li>
+              <li><span class="df-vp-dot blue"></span>Sidecar Mode Routing</li>
+            </ul>
+            <div class="df-stage-expand">
+              <div class="df-sub-item"><span class="df-sub-dot" style="background:#35d6ff"></span><div><div class="df-sub-label">Traces</div><div class="df-sub-detail">OTLPSpanExporter &#8594; localhost:4320</div></div></div>
+              <div class="df-sub-item"><span class="df-sub-dot" style="background:#ffb566"></span><div><div class="df-sub-label">Logs</div><div class="df-sub-detail">OTLPLogExporter &#8594; localhost:4318</div></div></div>
+              <div class="df-sub-item"><span class="df-sub-dot" style="background:#be85ff"></span><div><div class="df-sub-label">Metrics</div><div class="df-sub-detail">OTLPMetricExporter &#8594; localhost:4320</div></div></div>
+            </div>
+          </div>
+          <div class="df-pipe"><div class="df-pipe-track"><div class="df-pipe-line"></div><div class="df-particle p1"></div><div class="df-particle p2"></div><div class="df-particle p3"></div></div><div class="df-pipe-label">OTLP localhost</div></div>
+          <div class="df-stage df-stage-purple" data-stage="s-collectors">
+            <div class="df-stage-number purple">2</div>
+            <div class="df-stage-header"><span class="df-stage-icon">&#9881;</span><span class="df-stage-label">Sidecar Collectors</span></div>
+            <div class="df-stage-subtitle">5 collectors &#8212; each handles its native signals</div>
+            <ul class="df-value-points">
+              <li><span class="df-vp-dot purple"></span>Same 3 headers, any collector</li>
+              <li><span class="df-vp-dot purple"></span>Add Databricks auth headers</li>
+              <li><span class="df-vp-dot purple"></span>Forward over TLS</li>
+            </ul>
+            <div class="df-stage-expand">
+              <div class="df-sub-item"><span class="df-sub-dot" style="background:#ffb566"></span><div><div class="df-sub-label">Fluent Bit <span style="color:var(--muted);font-weight:400">:4318</span></div><div class="df-sub-detail">Logs</div></div></div>
+              <div class="df-sub-item"><span class="df-sub-dot" style="background:#be85ff"></span><div><div class="df-sub-label">Telegraf <span style="color:var(--muted);font-weight:400">:4319</span></div><div class="df-sub-detail">Metrics</div></div></div>
+              <div class="df-sub-item"><span class="df-sub-dot" style="background:#35d6ff"></span><div><div class="df-sub-label">Grafana Alloy <span style="color:var(--muted);font-weight:400">:4320</span></div><div class="df-sub-detail">Logs + Metrics + Traces</div></div></div>
+              <div class="df-sub-item"><span class="df-sub-dot" style="background:#e0697e"></span><div><div class="df-sub-label">Vector <span style="color:var(--muted);font-weight:400">:4322</span></div><div class="df-sub-detail">Logs</div></div></div>
+              <div class="df-sub-item"><span class="df-sub-dot" style="background:#5bb8f5"></span><div><div class="df-sub-label">OTel Collector <span style="color:var(--muted);font-weight:400">:4323</span></div><div class="df-sub-detail">Logs + Metrics + Traces</div></div></div>
+              <div class="df-sub-footer"><code>Authorization: Bearer &lt;token&gt;</code><code>X-Databricks-UC-Table-Name: &lt;table&gt;</code><code>X-Databricks-Workspace-Url: &lt;host&gt;</code></div>
+            </div>
+          </div>
+          <div class="df-pipe"><div class="df-pipe-track"><div class="df-pipe-line"></div><div class="df-particle p1"></div><div class="df-particle p2"></div><div class="df-particle p3"></div></div><div class="df-pipe-label">OTLP/HTTP (TLS)</div></div>
+          <div class="df-stage df-stage-orange" data-stage="s-ingest">
+            <div class="df-stage-number orange">3</div>
+            <div class="df-stage-header"><span class="df-stage-icon">&#9889;</span><span class="df-stage-label">Zerobus Ingest</span></div>
+            <div class="df-stage-subtitle">High-throughput ingestion</div>
+            <ul class="df-value-points">
+              <li><span class="df-vp-dot orange"></span>Schema validation</li>
+              <li><span class="df-vp-dot orange"></span>UC table routing</li>
+              <li><span class="df-vp-dot orange"></span>Back-pressure handling</li>
+            </ul>
+          </div>
+          <div class="df-pipe"><div class="df-pipe-track"><div class="df-pipe-line"></div><div class="df-particle p1"></div><div class="df-particle p2"></div><div class="df-particle p3"></div></div><div class="df-pipe-label">UC Routing</div></div>
+          <div class="df-stage df-stage-green" data-stage="s-uc">
+            <div class="df-stage-number green">4</div>
+            <div class="df-stage-header"><span class="df-stage-icon">&#9651;</span><span class="df-stage-label">Unity Catalog</span></div>
+            <div class="df-stage-subtitle">Governed Delta Lake storage</div>
+            <ul class="df-value-points">
+              <li><span class="df-vp-dot green"></span>ACID transactions</li>
+              <li><span class="df-vp-dot green"></span>Fine-grained access control</li>
+              <li><span class="df-vp-dot green"></span>Schema evolution</li>
+            </ul>
+          </div>
+        </div>
+
+        <!-- Direct path -->
+        <div class="df-path-label" style="margin-top:24px"><span class="df-path-dot" style="background:#ff3621"></span><strong>Direct Mode</strong> &#8212; App &#8594; Databricks (no sidecars)</div>
+        <div class="dataflow-pipeline">
+          <div class="df-stage df-stage-blue">
+            <div class="df-stage-number">1</div>
+            <div class="df-stage-header"><span class="df-stage-icon">&#128225;</span><span class="df-stage-label">OTel Simulator App</span></div>
+            <div class="df-stage-subtitle">OpenTelemetry Python SDK &#8212; Direct Export</div>
+            <ul class="df-value-points">
+              <li><span class="df-vp-dot blue"></span>OTLP/HTTP Exporters</li>
+              <li><span class="df-vp-dot blue"></span>Traces, Logs &amp; Metrics</li>
+              <li><span class="df-vp-dot blue"></span>Direct to Databricks OTLP</li>
+            </ul>
+          </div>
+          <div class="df-pipe"><div class="df-pipe-track"><div class="df-pipe-line" style="background:linear-gradient(90deg, rgba(38,54,91,0.3), #ff3621, rgba(38,54,91,0.3))"></div><div class="df-particle p1"></div><div class="df-particle p2"></div></div><div class="df-pipe-label">OTLP/HTTP (TLS)</div></div>
+          <div class="df-stage df-stage-orange">
+            <div class="df-stage-number orange">2</div>
+            <div class="df-stage-header"><span class="df-stage-icon">&#9889;</span><span class="df-stage-label">Zerobus Ingest</span></div>
+            <div class="df-stage-subtitle">High-throughput ingestion</div>
+            <ul class="df-value-points">
+              <li><span class="df-vp-dot orange"></span>Schema validation</li>
+              <li><span class="df-vp-dot orange"></span>UC table routing</li>
+              <li><span class="df-vp-dot orange"></span>Back-pressure handling</li>
+            </ul>
+          </div>
+          <div class="df-pipe"><div class="df-pipe-track"><div class="df-pipe-line" style="background:linear-gradient(90deg, rgba(38,54,91,0.3), #ff3621, rgba(38,54,91,0.3))"></div><div class="df-particle p1"></div><div class="df-particle p2"></div></div><div class="df-pipe-label">UC Routing</div></div>
+          <div class="df-stage df-stage-green">
+            <div class="df-stage-number green">3</div>
+            <div class="df-stage-header"><span class="df-stage-icon">&#9651;</span><span class="df-stage-label">Unity Catalog</span></div>
+            <div class="df-stage-subtitle">Direct-prefixed tables</div>
+            <ul class="df-value-points">
+              <li><span class="df-vp-dot green"></span>direct_otel_spans_v2</li>
+              <li><span class="df-vp-dot green"></span>direct_otel_logs_v2</li>
+              <li><span class="df-vp-dot green"></span>direct_otel_metrics</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

@@ -7,62 +7,56 @@ An OpenTelemetry simulator that demonstrates how five different open-source coll
 | Collector | Logs | Metrics | Traces | Rationale |
 |-----------|:----:|:-------:|:------:|-----------|
 | **Fluent Bit** | Yes | - | - | Purpose-built log processor. ~1MB footprint, 300+ plugins, de facto standard for K8s log collection. |
-| **Telegraf** | - | Yes | - | Purpose-built metrics agent. 300+ input plugins, native gRPC OTLP support, widely deployed for infrastructure monitoring. |
+| **Telegraf** | - | Yes | - | InfluxData's metrics agent. Supports OTLP input (gRPC) and OTLP/HTTP output. Drops optional histogram fields (min/max) during internal conversion, but Databricks accepts the payloads. |
 | **Grafana Alloy** | Yes | Yes | Yes | Full OTel-native collector. Handles all signals with component-based pipelines. Best fit for Grafana ecosystem teams. |
 | **Vector** | Yes | - | - | High-performance Rust-based pipeline. Excels at log collection and transformation (VRL). OTLP metrics forwarding has limitations. |
-| **OTel Collector** | Yes | Yes | Yes | The CNCF reference implementation. Vendor-neutral, handles all signals, 200+ community components. The standard choice for greenfield OTel. |
+| **OTel Collector** | Yes | Yes | Yes | The CNCF (Cloud Native Computing Foundation) reference implementation. Vendor-neutral, handles all signals, 200+ community components. The standard choice for greenfield OTel. |
+
+### Telegraf Note
+
+Telegraf receives OTLP metrics via its [OpenTelemetry input plugin](https://docs.influxdata.com/telegraf/v1/input-plugins/opentelemetry/) (gRPC on :4319) and forwards them to Databricks using the [OpenTelemetry output plugin](https://docs.influxdata.com/telegraf/v1/output-plugins/opentelemetry/) (`encoding_type = "protobuf"`, OTLP/HTTP). Internally, Telegraf converts metrics to Influx line protocol, which drops optional histogram fields like `min`, `max`, and `start_time_unix_nano`. Databricks accepts these payloads since those fields are optional in the OTLP spec. Native OTLP collectors (Alloy, OTel Collector) pass metrics through without conversion and preserve full fidelity.
 
 **The thesis:** Databricks exposes standard OTLP endpoints. Whatever collector you're already running, you can add a Databricks output — same three headers, data lands in Unity Catalog.
 
 ## Architecture
 
-![Architecture Diagram](architecture.png)
+### Sidecar Mode
 
 ```
-                              ┌─────────────────────────────────────────────────────────┐
-                              │              Sidecar Collectors (localhost)              │
-                              │                                                         │
-                              │  ┌─────────────┐  ┌─────────────┐  ┌────────────────┐  │
-                     ┌───────→│  │ Fluent Bit   │  │   Vector    │  │ Grafana Alloy  │  │
-                     │  OTLP  │  │ :4318        │  │   :4322     │  │ :4320          │  │
-┌──────────────┐     │  HTTP  │  │ (logs)       │  │   (logs)    │  │ (all signals)  │  │
-│  OTel        │     │        │  └──────┬───────┘  └──────┬──────┘  └───────┬────────┘  │
-│  Simulator   │  Logs        │         │                 │                 │            │
-│  App         │─────┘        │         │                 │                 │            │
-│              │              │  ┌──────┴───────┐                  ┌───────┴────────┐   │
-│  (FastAPI    │  Metrics     │  │  Telegraf    │                  │ OTel Collector │   │
-│   :8000)     │──────────────│  │  :4319       │                  │ :4323          │   │
-│              │  OTLP gRPC   │  │  (metrics)   │                  │ (all signals)  │   │
-│              │              │  └──────┬───────┘                  └───────┬────────┘   │
-│              │  Traces      │         │                                  │            │
-│              │──────────────│         │                                  │            │
-└──────────────┘  OTLP HTTP   └─────────│──────────────────────────────────│────────────┘
-                                        │                                  │
-                                        │      OTLP/HTTP over TLS         │
-                                        │      + 3 Databricks headers     │
-                                        ▼                                  ▼
-                              ┌─────────────────────────────────────────────────────────┐
-                              │  Databricks Workspace                                   │
-                              │                                                         │
-                              │  OTLP Ingest Endpoints:                                 │
-                              │    /api/2.0/tracing/otel/v1/traces                      │
-                              │    /api/2.0/tracing/otel/v1/logs                        │
-                              │    /api/2.0/otel/v1/metrics                             │
-                              │                                                         │
-                              │  Headers:                                               │
-                              │    Authorization: Bearer <token>                        │
-                              │    X-Databricks-UC-Table-Name: <catalog.schema.table>   │
-                              │    X-Databricks-Workspace-Url: <host>                   │
-                              │                                                         │
-                              │  Unity Catalog: telemetry.otel                          │
-                              │  ┌───────────────────────────────────────────────────┐  │
-                              │  │ fluentbit_otel_logs_v2    alloy_otel_logs_v2     │  │
-                              │  │ vector_otel_logs_v2       otelcol_otel_logs_v2   │  │
-                              │  │ telegraf_otel_metrics     alloy_otel_metrics     │  │
-                              │  │ otelcol_otel_metrics      alloy_otel_spans_v2    │  │
-                              │  │ otelcol_otel_spans_v2                             │  │
-                              │  └───────────────────────────────────────────────────┘  │
-                              └─────────────────────────────────────────────────────────┘
+                        ┌───────────────────────────────────┐
+                        │        Sidecar Collectors         │
+                        │                                   │
+                   ┌───→│  Fluent Bit       Logs            │
+                   │    │  Telegraf         Metrics          │
+┌─────────────┐    │    │  Grafana Alloy    All signals     │──→  Databricks
+│  OTel       │────┘    │  Vector           Logs            │     OTLP Endpoints
+│  Simulator  │─── OTLP │  OTel Collector   All signals     │
+│             │────┐    │                                   │        │
+└─────────────┘    │    └───────────────────────────────────┘        │
+                   │                                                ▼
+                   │          Each collector adds 3 headers:   ┌─────────────────┐
+                   │          • Authorization                  │  Unity Catalog   │
+                   └──────    • X-Databricks-UC-Table-Name     │  telemetry.otel  │
+                              • X-Databricks-Workspace-Url     └─────────────────┘
+
+  Tables created per collector:
+  ├── fluentbit_otel_logs_v2       ├── alloy_otel_{logs,metrics,spans}_v2
+  ├── telegraf_otel_metrics        ├── otelcol_otel_{logs,metrics,spans}_v2
+  └── vector_otel_logs_v2
+```
+
+### Direct Mode
+
+```
+┌─────────────┐     OTLP/HTTP      ┌─────────────────┐
+│  OTel       │────────────────────→│  Unity Catalog   │
+│  Simulator  │     + 3 headers     │  telemetry.otel  │
+└─────────────┘                     └─────────────────┘
+
+  Tables:
+  ├── direct_otel_spans_v2
+  ├── direct_otel_logs_v2
+  └── direct_otel_metrics
 ```
 
 ### Signal Fan-out
@@ -97,7 +91,7 @@ Installs Fluent Bit, Telegraf, Grafana Alloy, Vector, and OTel Collector.
 
 ### 2. Create tables
 
-Run `sql/setup_otel_tables.sql` against your Databricks workspace to create the 9 target tables in `telemetry.otel`.
+Run `sql/setup_otel_tables.sql` against your Databricks workspace to create the target tables in `telemetry.otel`.
 
 ### 3. Configure environment
 
@@ -109,10 +103,10 @@ cp .env.example .env
 ### 4. Run everything
 
 ```bash
-./start-sidecars.sh
+./start-all.sh
 ```
 
-Launches all 5 collectors and the app. Open `http://localhost:8000` to use the simulator.
+Launches all 5 collectors, the OTel Simulator (`http://localhost:8000`), and LakeEO Dashboard (`http://localhost:8001`).
 
 Press `Ctrl+C` to stop all processes.
 
@@ -135,7 +129,7 @@ uvicorn backend.server:app --port 8000
 ## Repo Structure
 
 ```
-├── start-sidecars.sh              # Launch all 5 collectors + app
+├── start-all.sh              # Launch all 5 collectors + app
 ├── .env.example                   # Environment config template
 ├── databricks.yml                 # Databricks bundle config
 │
@@ -147,7 +141,7 @@ uvicorn backend.server:app --port 8000
 │   │   └── models.py              # Response models
 │   └── frontend/                  # Static HTML/JS/CSS UI
 │
-├── app_otel_ops/                  # Operational dashboard (read-only)
+├── app_lake_eo/                   # LakeEO — Enterprise Observability dashboard
 │   ├── backend/                   # SQL queries against UC tables
 │   └── frontend/                  # Dashboard UI
 │
@@ -156,7 +150,7 @@ uvicorn backend.server:app --port 8000
 │   ├── fluent-bit/
 │   │   └── fluent-bit.yaml        # Fluent Bit (logs)
 │   ├── telegraf/
-│   │   └── telegraf.conf          # Telegraf (metrics)
+│   │   └── telegraf.conf          # Telegraf (metrics — gauges only)
 │   ├── alloy/
 │   │   └── config.alloy           # Grafana Alloy (logs + metrics + traces)
 │   ├── vector/
@@ -173,7 +167,7 @@ uvicorn backend.server:app --port 8000
 
 ## Target Tables
 
-All 9 tables in `telemetry.otel`, prefixed by collector:
+Tables in `telemetry.otel`, prefixed by collector:
 
 | Table | Collector | Signal |
 |-------|-----------|--------|

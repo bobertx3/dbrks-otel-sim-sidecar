@@ -92,8 +92,10 @@ CREATE TABLE IF NOT EXISTS telemetry.otel.otelcol_otel_logs_v2 (
 ) USING delta TBLPROPERTIES ('delta.parquet.compression.codec' = 'zstd', 'otel.schemaVersion' = 'v2');
 
 -- ============================================================
--- Metrics (v1 schema) — Telegraf, Grafana Alloy, Vector, OTel Collector
+-- Metrics (v1 schema) — Grafana Alloy, OTel Collector
 -- ============================================================
+-- NOTE: Telegraf has been removed from the project (histogram fidelity issues).
+-- This table is retained for backward compatibility with existing data.
 CREATE TABLE IF NOT EXISTS telemetry.otel.telegraf_otel_metrics (
   name STRING, description STRING, unit STRING, metric_type STRING,
   gauge STRUCT<start_time_unix_nano: BIGINT, time_unix_nano: BIGINT, value: DOUBLE, exemplars: ARRAY<STRUCT<time_unix_nano: BIGINT, value: DOUBLE, span_id: STRING, trace_id: STRING, filtered_attributes: MAP<STRING, STRING>>>, attributes: MAP<STRING, STRING>, flags: INT>,

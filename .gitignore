@@ -38,6 +38,9 @@ dist/
 # Collector binaries (downloaded locally)
 collectors/bin/
 
+# Alloy data directory
+data-alloy/
+
 # Logs and temp files
 *.log
 *.tmp

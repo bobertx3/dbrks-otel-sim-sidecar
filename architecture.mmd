@@ -7,31 +7,36 @@ graph LR
     subgraph COLLECTORS["Sidecar Collectors"]
         direction TB
         FB["🟠 Fluent Bit<br/>:4318<br/><i>Logs</i>"]
-        TG["🟣 Telegraf<br/>:4319<br/><i>Metrics</i>"]
+        TG["🟢 Telegraf<br/>:4319<br/><i>Metrics (gauges)</i>"]
         AL["🔵 Grafana Alloy<br/>:4320<br/><i>Logs + Metrics + Traces</i>"]
         VE["🔴 Vector<br/>:4322<br/><i>Logs</i>"]
         OC["🔵 OTel Collector<br/>:4323<br/><i>Logs + Metrics + Traces</i>"]
     end
 
-    subgraph DATABRICKS["Databricks Unity Catalog"]
+    subgraph DATABRICKS["Databricks Unity Catalog · telemetry.otel"]
         direction TB
         LOGS["📋 Logs Tables<br/>fluentbit_otel_logs_v2<br/>vector_otel_logs_v2<br/>alloy_otel_logs_v2<br/>otelcol_otel_logs_v2"]
         METRICS["📊 Metrics Tables<br/>telegraf_otel_metrics<br/>alloy_otel_metrics<br/>otelcol_otel_metrics"]
         TRACES["🔍 Spans Tables<br/>alloy_otel_spans_v2<br/>otelcol_otel_spans_v2"]
+        DIRECT["🔶 Direct Tables<br/>direct_otel_spans_v2<br/>direct_otel_logs_v2<br/>direct_otel_metrics"]
     end
 
+    %% Sidecar Mode
     SDK -->|"Logs<br/>OTLP/HTTP"| FB
-    SDK -->|"Logs<br/>OTLP/HTTP"| VE
     SDK -->|"Metrics<br/>OTLP/gRPC"| TG
+    SDK -->|"Logs<br/>OTLP/HTTP"| VE
     SDK -->|"All signals<br/>OTLP/HTTP"| AL
     SDK -->|"All signals<br/>OTLP/HTTP"| OC
 
     FB -->|"OTLP/HTTP<br/>+ 3 headers"| LOGS
-    VE -->|"OTLP/HTTP<br/>+ 3 headers"| LOGS
     TG -->|"OTLP/HTTP<br/>+ 3 headers"| METRICS
+    VE -->|"OTLP/HTTP<br/>+ 3 headers"| LOGS
     AL -->|"OTLP/HTTP<br/>+ 3 headers"| LOGS
     AL -->|"OTLP/HTTP<br/>+ 3 headers"| METRICS
     AL -->|"OTLP/HTTP<br/>+ 3 headers"| TRACES
     OC -->|"OTLP/HTTP<br/>+ 3 headers"| LOGS
     OC -->|"OTLP/HTTP<br/>+ 3 headers"| METRICS
     OC -->|"OTLP/HTTP<br/>+ 3 headers"| TRACES
+
+    %% Direct Mode
+    SDK -.->|"Direct Mode<br/>OTLP/HTTP + 3 headers"| DIRECT

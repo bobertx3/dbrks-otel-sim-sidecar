@@ -6,6 +6,31 @@
 let collectors = {};
 let currentRange = "all";
 
+// ---- Theme Toggle ----
+
+const themeToggle = document.getElementById("theme-toggle");
+const root = document.documentElement;
+
+function applyTheme(theme) {
+  root.setAttribute("data-theme", theme);
+  themeToggle.innerHTML = theme === "dark" ? "&#9788;" : "&#9790;";
+  themeToggle.title = theme === "dark" ? "Switch to light mode" : "Switch to dark mode";
+  localStorage.setItem("otel-ops-theme", theme);
+}
+
+themeToggle.addEventListener("click", () => {
+  const current = root.getAttribute("data-theme") || "light";
+  applyTheme(current === "dark" ? "light" : "dark");
+});
+
+// Restore saved preference or respect OS preference
+const saved = localStorage.getItem("otel-ops-theme");
+if (saved) {
+  applyTheme(saved);
+} else if (window.matchMedia("(prefers-color-scheme: dark)").matches) {
+  applyTheme("dark");
+}
+
 const healthPill = document.getElementById("health-pill");
 const tilesEl = document.getElementById("collector-tiles");
 const rangeSelect = document.getElementById("time-range");
@@ -38,10 +63,10 @@ async function checkHealth() {
     const res = await fetch("/api/health");
     const data = await res.json();
     healthPill.textContent = data.status === "ok" ? "Connected" : "Misconfigured";
-    healthPill.style.color = data.status === "ok" ? "#9cf6b5" : "#ff8ca9";
+    healthPill.className = `status-pill ${data.status === "ok" ? "ok" : "error"}`;
   } catch (_) {
     healthPill.textContent = "Offline";
-    healthPill.style.color = "#ff8ca9";
+    healthPill.className = "status-pill error";
   }
 }
 
@@ -64,7 +89,9 @@ async function loadCounts() {
 
 function renderTiles(counts) {
   tilesEl.innerHTML = "";
+  // Only show sidecar collector tiles (exclude direct)
   for (const [cid, c] of Object.entries(collectors)) {
+    if (cid === "direct") continue;
     const cc = counts[cid] || {};
     const tile = document.createElement("div");
     tile.className = "collector-tile";
@@ -79,19 +106,45 @@ function renderTiles(counts) {
     `;
     tilesEl.appendChild(tile);
   }
+  // Pulse all tiles to indicate refresh
+  tilesEl.querySelectorAll(".collector-tile").forEach(t => {
+    t.classList.remove("pulse");
+    void t.offsetWidth;
+    t.classList.add("pulse");
+  });
 }
 
 // ---- Load All Sections ----
 
-async function loadAllSignals() {
+let sectionsBuilt = false;
+const previousKeys = {};  // track seen items per column for new-row highlighting
+
+function rowKey(signal, item) {
+  if (signal === "traces") return item.trace_id || "";
+  if (signal === "logs") return `${item.time}|${item.body || ""}|${item.severity_text || ""}`;
+  return `${item.name || ""}|${item.time || ""}|${item.value || ""}`;
+}
+
+// For metrics we build keys after grouping, so we also need per-column grouped keys
+function metricsGroupKeys(metrics) {
+  const byName = {};
+  metrics.forEach(m => {
+    const name = m.name || "unknown";
+    if (!byName[name]) byName[name] = 0;
+    byName[name]++;
+  });
+  return new Set(Object.entries(byName).map(([name, count]) => `${name}|${count}`));
+}
+
+function buildSections() {
   const signals = ["traces", "logs", "metrics"];
   for (const signal of signals) {
     const sectionEl = document.getElementById(`${signal}-section`);
     if (!sectionEl) continue;
     sectionEl.innerHTML = "";
 
-    // Find all collectors that have this signal
-    const capable = Object.entries(collectors).filter(([_, c]) => c.signals.includes(signal));
+    // Exclude "direct" from sidecar signal sections
+    const capable = Object.entries(collectors).filter(([cid, c]) => cid !== "direct" && c.signals.includes(signal));
     sectionEl.style.gridTemplateColumns = `repeat(${capable.length}, 1fr)`;
 
     for (const [cid, c] of capable) {
@@ -107,9 +160,52 @@ async function loadAllSignals() {
         </div>
       `;
       sectionEl.appendChild(col);
+    }
+  }
 
-      // Fetch data
+  // Build Direct section
+  buildDirectSection();
+  sectionsBuilt = true;
+}
+
+function buildDirectSection() {
+  const directEl = document.getElementById("direct-columns");
+  if (!directEl) return;
+  const direct = collectors["direct"];
+  if (!direct) return;
+  directEl.innerHTML = "";
+
+  const signals = ["traces", "logs", "metrics"];
+  for (const signal of signals) {
+    if (!direct.signals.includes(signal)) continue;
+    const col = document.createElement("div");
+    col.className = "collector-column";
+    col.innerHTML = `
+      <div class="col-header">
+        <span class="col-name">${signal.charAt(0).toUpperCase() + signal.slice(1)}</span>
+        <span class="col-table">${direct.tables[signal]}</span>
+      </div>
+      <div class="col-content" id="col-${signal}-direct">
+        <div class="empty-state small">Loading...</div>
+      </div>
+    `;
+    directEl.appendChild(col);
+  }
+}
+
+async function loadAllSignals() {
+  if (!sectionsBuilt) buildSections();
+
+  const signals = ["traces", "logs", "metrics"];
+  for (const signal of signals) {
+    // Sidecar collectors
+    const capable = Object.entries(collectors).filter(([cid, c]) => cid !== "direct" && c.signals.includes(signal));
+    for (const [cid, c] of capable) {
       fetchSignalData(signal, cid, c);
+    }
+    // Direct collector
+    if (collectors["direct"] && collectors["direct"].signals.includes(signal)) {
+      fetchSignalData(signal, "direct", collectors["direct"]);
     }
   }
 }
@@ -125,9 +221,18 @@ async function fetchSignalData(signal, cid, c) {
       contentEl.innerHTML = '<div class="empty-state small">No data</div>';
       return;
     }
-    if (signal === "traces") renderTracesColumn(contentEl, items, cid);
-    else if (signal === "logs") renderLogsColumn(contentEl, items);
-    else if (signal === "metrics") renderMetricsColumn(contentEl, items);
+    const colKey = `${signal}-${cid}`;
+    const prevSet = previousKeys[colKey] || new Set();
+    if (signal === "metrics") {
+      const newKeys = metricsGroupKeys(items);
+      previousKeys[colKey] = newKeys;
+      renderMetricsColumn(contentEl, items, prevSet);
+    } else {
+      const newKeys = new Set(items.map(item => rowKey(signal, item)));
+      previousKeys[colKey] = newKeys;
+      if (signal === "traces") renderTracesColumn(contentEl, items, cid, prevSet);
+      else if (signal === "logs") renderLogsColumn(contentEl, items, prevSet);
+    }
   } catch (err) {
     contentEl.innerHTML = `<div class="empty-state small error">${err.message}</div>`;
   }
@@ -135,7 +240,7 @@ async function fetchSignalData(signal, cid, c) {
 
 // ---- Render: Traces Column ----
 
-function renderTracesColumn(el, traces, collector) {
+function renderTracesColumn(el, traces, collector, prevSet) {
   const byTrace = {};
   traces.forEach(t => {
     const tid = t.trace_id || "?";
@@ -148,8 +253,9 @@ function renderTracesColumn(el, traces, collector) {
     const root = group.first;
     const durMs = nanoToMs(root.start_time_unix_nano, root.end_time_unix_nano);
     const spanCount = group.spans.length;
+    const isNew = prevSet.size > 0 && !prevSet.has(tid);
     html += `
-      <div class="mini-row clickable" data-trace-id="${tid}" data-collector="${collector}">
+      <div class="mini-row clickable${isNew ? " new-row" : ""}" data-trace-id="${tid}" data-collector="${collector}">
         <div class="mini-row-main">
           <span class="mini-time">${formatTime(root.time)}</span>
           <span class="mini-name">${root.name || "span"}</span>
@@ -171,14 +277,16 @@ function renderTracesColumn(el, traces, collector) {
 
 // ---- Render: Logs Column ----
 
-function renderLogsColumn(el, logs) {
+function renderLogsColumn(el, logs, prevSet) {
   let html = '<div class="mini-table">';
   logs.forEach((log, i) => {
     const sevClass = (log.severity_text || "").toLowerCase().includes("error") ? "critical"
       : (log.severity_text || "").toLowerCase().includes("warn") ? "warn" : "normal";
     const body = (log.body || "").slice(0, 80);
+    const key = rowKey("logs", log);
+    const isNew = prevSet.size > 0 && !prevSet.has(key);
     html += `
-      <div class="mini-row" data-idx="${i}">
+      <div class="mini-row${isNew ? " new-row" : ""}" data-idx="${i}">
         <div class="mini-row-main">
           <span class="mini-time">${formatTime(log.time)}</span>
           <span class="sev-badge ${sevClass}">${log.severity_text || "INFO"}</span>
@@ -201,7 +309,7 @@ function renderLogsColumn(el, logs) {
 
 // ---- Render: Metrics Column ----
 
-function renderMetricsColumn(el, metrics) {
+function renderMetricsColumn(el, metrics, prevSet) {
   // Group by metric name for a compact view
   const byName = {};
   metrics.forEach(m => {
@@ -215,8 +323,11 @@ function renderMetricsColumn(el, metrics) {
   let html = '<div class="mini-table">';
   for (const [name, info] of Object.entries(byName)) {
     const avg = info.values.length > 0 ? (info.values.reduce((a, b) => a + b, 0) / info.values.length).toFixed(1) : "-";
+    // For metrics, key includes count so changed samples flash
+    const mKey = `${name}|${info.count}`;
+    const isNew = prevSet.size > 0 && !prevSet.has(mKey);
     html += `
-      <div class="mini-row">
+      <div class="mini-row${isNew ? " new-row" : ""}">
         <div class="mini-row-main">
           <span class="mini-metric-name">${name}</span>
           <span class="mini-badge metrics">${info.type}</span>
@@ -349,9 +460,100 @@ detailModal.addEventListener("click", e => { if (e.target === detailModal) detai
 
 function openDetailModal(title, data) {
   detailTitle.textContent = title;
-  detailContent.textContent = JSON.stringify(data, null, 2);
+
+  // If it's metric data (array with metric_type), render visually
+  if (Array.isArray(data) && data.length > 0 && data[0].metric_type) {
+    detailContent.innerHTML = renderMetricDetail(data);
+  } else {
+    detailContent.innerHTML = `<pre class="raw-json">${JSON.stringify(data, null, 2).replace(/</g, '&lt;')}</pre>`;
+  }
   detailModal.classList.remove("hidden");
 }
+
+function renderMetricDetail(metrics) {
+  const name = metrics[0].name || "unknown";
+  const type = metrics[0].metric_type || "unknown";
+  const unit = metrics[0].unit || "";
+  const desc = metrics[0].description || "";
+
+  let html = `<div class="metric-viz">`;
+  html += `<div class="mv-header"><span class="mv-type">${type.toUpperCase()}</span> <span class="mv-unit">${unit ? `(${unit})` : ""}</span></div>`;
+  if (desc) html += `<div class="mv-desc">${desc}</div>`;
+
+  if (type === "histogram") {
+    // Group by attributes (route) and show bars
+    const byRoute = {};
+    metrics.forEach(m => {
+      let attrs = {};
+      try { attrs = typeof m.attributes === "string" ? JSON.parse(m.attributes) : (m.attributes || {}); } catch {}
+      const key = attrs.route || attrs.domain || "default";
+      if (!byRoute[key]) byRoute[key] = { count: 0, sum: 0, min: Infinity, max: -Infinity, samples: [] };
+      const g = byRoute[key];
+      g.count += (m.hist_count || 0);
+      g.sum += (m.hist_sum || 0);
+      if (m.hist_min != null && m.hist_min < g.min) g.min = m.hist_min;
+      if (m.hist_max != null && m.hist_max > g.max) g.max = m.hist_max;
+      g.samples.push(m.hist_sum / (m.hist_count || 1));
+    });
+
+    const globalMax = Math.max(...Object.values(byRoute).map(g => g.max), 1);
+
+    html += `<div class="mv-bars">`;
+    for (const [route, g] of Object.entries(byRoute)) {
+      const avg = g.count > 0 ? (g.sum / g.count).toFixed(1) : 0;
+      const barPct = Math.max((g.max / globalMax) * 100, 2).toFixed(1);
+      const minVal = g.min === Infinity ? 0 : g.min.toFixed(1);
+      html += `
+        <div class="mv-bar-row">
+          <div class="mv-bar-label">${route}</div>
+          <div class="mv-bar-track">
+            <div class="mv-bar-fill" style="width:${barPct}%"></div>
+          </div>
+          <div class="mv-bar-stats">
+            <span>avg <strong>${avg}</strong></span>
+            <span>min <strong>${minVal}</strong></span>
+            <span>max <strong>${g.max.toFixed(1)}</strong></span>
+            <span>${g.count} samples</span>
+          </div>
+        </div>`;
+    }
+    html += `</div>`;
+  } else {
+    // Gauge or sum — show value list
+    html += `<div class="mv-values">`;
+    metrics.forEach(m => {
+      const val = m.value != null ? Number(m.value).toFixed(1) : "—";
+      let attrs = {};
+      try { attrs = typeof m.attributes === "string" ? JSON.parse(m.attributes) : (m.attributes || {}); } catch {}
+      const label = attrs.route || attrs.domain || attrs["service.name"] || "";
+      html += `<div class="mv-val-row"><span class="mv-val-label">${label}</span><span class="mv-val-num">${val} ${unit}</span></div>`;
+    });
+    html += `</div>`;
+  }
+
+  // Show raw JSON in collapsible
+  html += `<details class="mv-raw"><summary>Raw JSON</summary><pre>${JSON.stringify(metrics, null, 2)}</pre></details>`;
+  html += `</div>`;
+  return html;
+}
+
+// ---- Data Flow Modal ----
+
+const dataflowModal = document.getElementById("dataflow-modal");
+const btnDataflow = document.getElementById("btn-dataflow");
+const closeDataflow = document.getElementById("close-dataflow");
+const btnExpandAll = document.getElementById("btn-expand-all");
+const dfStages = document.querySelectorAll(".df-stage");
+let dfExpanded = false;
+
+btnDataflow.addEventListener("click", () => { dataflowModal.classList.remove("hidden"); });
+closeDataflow.addEventListener("click", () => { dataflowModal.classList.add("hidden"); });
+dataflowModal.addEventListener("click", e => { if (e.target === dataflowModal) dataflowModal.classList.add("hidden"); });
+btnExpandAll.addEventListener("click", () => {
+  dfExpanded = !dfExpanded;
+  dfStages.forEach(s => s.classList.toggle("expanded", dfExpanded));
+  btnExpandAll.textContent = dfExpanded ? "Collapse" : "Expand";
+});
 
 // ---- Refresh ----
 
@@ -369,5 +571,5 @@ refreshBtn.addEventListener("click", refreshAll);
   await checkHealth();
   await loadCollectors();
   await refreshAll();
-  setInterval(loadCounts, 15000);
+  setInterval(refreshAll, 5000);
 })();

@@ -45,7 +45,7 @@ install_telegraf() {
         info "Installing Telegraf via Homebrew..."
         brew install telegraf
     else
-        error "Homebrew not found. Install Telegraf manually: https://docs.influxdata.com/telegraf/v1/install/"
+        error "Homebrew not found. Install Telegraf manually: https://docs.influxdata.com/telegraf/latest/install/"
         return 1
     fi
     info "Telegraf installed: $(telegraf --version 2>/dev/null | head -1)"

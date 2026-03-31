@@ -7,11 +7,9 @@ from dataclasses import dataclass
 from opentelemetry import _logs as otel_logs
 from opentelemetry import metrics, trace
 from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
+from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter as OTLPMetricExporterGrpc
 from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import (
-    OTLPMetricExporter as OTLPMetricExporterGrpc,
-)
 from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
 from opentelemetry.sdk._logs.export import SimpleLogRecordProcessor
 from opentelemetry.sdk.metrics import MeterProvider
@@ -44,16 +42,15 @@ SIDECAR_COLLECTORS = [
         "signals": ["metrics"],
         "port": 4319,
         "protocol": "grpc",
-        "description": "InfluxData plugin-driven metrics agent",
+        "description": "InfluxData's metrics-focused agent",
         "info": (
-            "Telegraf is InfluxData's open-source metrics collection agent with 300+ input "
-            "and 60+ output plugins. It's the go-to agent for infrastructure monitoring — "
-            "collecting system metrics, database stats, and application metrics. Commonly "
-            "paired with InfluxDB, Prometheus, or Datadog. Purpose-built for metrics, "
-            "not logs or traces."
+            "Telegraf is InfluxData's plugin-driven agent for collecting and reporting metrics. "
+            "It supports OTLP input via gRPC and OTLP/HTTP output. Note: Telegraf's internal "
+            "metric model converts OTLP to Influx line protocol, which loses histogram min/max "
+            "fields. A namepass filter restricts output to gauges and sums only."
         ),
         "config_format": "TOML",
-        "config_lines": "~10",
+        "config_lines": "~25",
     },
     {
         "name": "Grafana Alloy",
@@ -112,9 +109,9 @@ class EmitterConfig:
     databricks_host: str
     databricks_token: str
     service_name: str
-    spans_table: str
-    logs_table: str
-    metrics_table: str
+    direct_spans_table: str
+    direct_logs_table: str
+    direct_metrics_table: str
 
     @classmethod
     def from_env(cls) -> "EmitterConfig":
@@ -138,9 +135,9 @@ class EmitterConfig:
         required = {
             "DATABRICKS_HOST": os.getenv("DATABRICKS_HOST", ""),
             "OTEL_SERVICE_NAME": os.getenv("OTEL_SERVICE_NAME", ""),
-            "OTEL_SPANS_TABLE": os.getenv("OTEL_SPANS_TABLE", ""),
-            "OTEL_LOGS_TABLE": os.getenv("OTEL_LOGS_TABLE", ""),
-            "OTEL_METRICS_TABLE": os.getenv("OTEL_METRICS_TABLE", ""),
+            "OTEL_DIRECT_SPANS_TABLE": os.getenv("OTEL_DIRECT_SPANS_TABLE", ""),
+            "OTEL_DIRECT_LOGS_TABLE": os.getenv("OTEL_DIRECT_LOGS_TABLE", ""),
+            "OTEL_DIRECT_METRICS_TABLE": os.getenv("OTEL_DIRECT_METRICS_TABLE", ""),
         }
         missing = [k for k, v in required.items() if not v]
         if not token:
@@ -152,16 +149,25 @@ class EmitterConfig:
             databricks_host=required["DATABRICKS_HOST"].rstrip("/"),
             databricks_token=token,
             service_name=required["OTEL_SERVICE_NAME"],
-            spans_table=required["OTEL_SPANS_TABLE"],
-            logs_table=required["OTEL_LOGS_TABLE"],
-            metrics_table=required["OTEL_METRICS_TABLE"],
+            direct_spans_table=required["OTEL_DIRECT_SPANS_TABLE"],
+            direct_logs_table=required["OTEL_DIRECT_LOGS_TABLE"],
+            direct_metrics_table=required["OTEL_DIRECT_METRICS_TABLE"],
         )
 
 
 class OTelEmitter:
-    def __init__(self, cfg: EmitterConfig) -> None:
+    def __init__(self, cfg: EmitterConfig, sidecar_mode: bool | None = None) -> None:
         self.cfg = cfg
-        self.sidecar_mode = os.getenv("OTEL_SIDECAR_MODE", "false").lower() in ("true", "1", "yes")
+        if sidecar_mode is not None:
+            self.sidecar_mode = sidecar_mode
+        else:
+            self.sidecar_mode = os.getenv("OTEL_SIDECAR_MODE", "false").lower() in ("true", "1", "yes")
+
+        # In direct mode, emitter sends to direct_ tables.
+        # In sidecar mode, the collectors set their own table names — these aren't used by exporters.
+        self._active_spans_table = cfg.direct_spans_table
+        self._active_logs_table = cfg.direct_logs_table
+        self._active_metrics_table = cfg.direct_metrics_table
 
         resource = Resource.create(
             {
@@ -173,6 +179,7 @@ class OTelEmitter:
 
         # --- Traces ---
         self.tracer_provider = TracerProvider(resource=resource)
+        self.traces_endpoint = f"{cfg.databricks_host}/api/2.0/tracing/otel/v1/traces"
         if self.sidecar_mode:
             for c in SIDECAR_COLLECTORS:
                 if "traces" in c["signals"]:
@@ -181,15 +188,15 @@ class OTelEmitter:
                     )
                     self.tracer_provider.add_span_processor(SimpleSpanProcessor(exp))
         else:
-            self.traces_endpoint = f"{cfg.databricks_host}/api/2.0/tracing/otel/v1/traces"
             exp = OTLPSpanExporter(
-                endpoint=self.traces_endpoint, headers=self._headers(cfg.spans_table)
+                endpoint=self.traces_endpoint, headers=self._headers(self._active_spans_table)
             )
             self.tracer_provider.add_span_processor(SimpleSpanProcessor(exp))
         self.tracer = self.tracer_provider.get_tracer(cfg.service_name)
 
         # --- Logs ---
         self.logger_provider = LoggerProvider(resource=resource)
+        self.logs_endpoint = f"{cfg.databricks_host}/api/2.0/tracing/otel/v1/logs"
         if self.sidecar_mode:
             for c in SIDECAR_COLLECTORS:
                 if "logs" in c["signals"]:
@@ -198,9 +205,8 @@ class OTelEmitter:
                     )
                     self.logger_provider.add_log_record_processor(SimpleLogRecordProcessor(exp))
         else:
-            self.logs_endpoint = f"{cfg.databricks_host}/api/2.0/tracing/otel/v1/logs"
             exp = OTLPLogExporter(
-                endpoint=self.logs_endpoint, headers=self._headers(cfg.logs_table)
+                endpoint=self.logs_endpoint, headers=self._headers(self._active_logs_table)
             )
             self.logger_provider.add_log_record_processor(SimpleLogRecordProcessor(exp))
 
@@ -214,6 +220,7 @@ class OTelEmitter:
 
         # --- Metrics ---
         self.metric_readers: list[PeriodicExportingMetricReader] = []
+        self.metrics_endpoint = f"{cfg.databricks_host}/api/2.0/otel/v1/metrics"
         if self.sidecar_mode:
             for c in SIDECAR_COLLECTORS:
                 if "metrics" in c["signals"]:
@@ -225,14 +232,13 @@ class OTelEmitter:
                         exp = OTLPMetricExporter(
                             endpoint=f"http://localhost:{c['port']}/v1/metrics", headers={}
                         )
-                    reader = PeriodicExportingMetricReader(exp, export_interval_millis=86_400_000)
+                    reader = PeriodicExportingMetricReader(exp, export_interval_millis=5_000)
                     self.metric_readers.append(reader)
         else:
-            self.metrics_endpoint = f"{cfg.databricks_host}/api/2.0/otel/v1/metrics"
             exp = OTLPMetricExporter(
-                endpoint=self.metrics_endpoint, headers=self._headers(cfg.metrics_table)
+                endpoint=self.metrics_endpoint, headers=self._headers(self._active_metrics_table)
             )
-            reader = PeriodicExportingMetricReader(exp, export_interval_millis=86_400_000)
+            reader = PeriodicExportingMetricReader(exp, export_interval_millis=5_000)
             self.metric_readers.append(reader)
 
         self.meter_provider = MeterProvider(
@@ -274,6 +280,26 @@ class OTelEmitter:
             "X-Databricks-Workspace-Url": self.cfg.databricks_host,
         }
 
+    # Realistic child span templates per domain
+    _CHILD_SPANS = {
+        "applications": [
+            ("auth.validate", 0.003, 0.012),
+            ("cache.lookup", 0.001, 0.008),
+            ("db.query", 0.005, 0.030),
+            ("serialize.response", 0.001, 0.005),
+        ],
+        "infrastructure": [
+            ("k8s.api.check", 0.002, 0.010),
+            ("resource.probe", 0.003, 0.015),
+            ("metrics.collect", 0.002, 0.008),
+        ],
+        "networking": [
+            ("dns.resolve", 0.001, 0.006),
+            ("tcp.connect", 0.002, 0.012),
+            ("tls.handshake", 0.003, 0.015),
+        ],
+    }
+
     def emit_trace(
         self,
         *,
@@ -286,20 +312,33 @@ class OTelEmitter:
         import time
         import random
 
+        children = list(self._CHILD_SPANS.get(domain, self._CHILD_SPANS["applications"]))
+        # Pick 2-4 child spans, always include the domain-specific ones
+        num_children = random.randint(2, min(4, len(children)))
+        selected = random.sample(children, num_children)
+
         with self.tracer.start_as_current_span(
             name=label,
             attributes={"domain": domain, "event": event, **attributes},
         ) as parent:
             parent.add_event("simulator.triggered", {"event.label": label})
-            # Simulate realistic span duration
-            time.sleep(random.uniform(0.01, 0.05))
+            time.sleep(random.uniform(0.005, 0.015))
+
+            for child_label, min_dur, max_dur in selected:
+                with self.tracer.start_as_current_span(
+                    child_label, attributes={"component": child_label, "domain": domain}
+                ) as child:
+                    time.sleep(random.uniform(min_dur, max_dur))
+
+            # Error events get an extra downstream.call child
             if child_name:
                 with self.tracer.start_as_current_span(
                     child_name, attributes={"component": child_name, **attributes}
                 ) as child:
                     child.add_event("simulator.child_step")
                     time.sleep(random.uniform(0.005, 0.025))
-            time.sleep(random.uniform(0.005, 0.015))
+
+            time.sleep(random.uniform(0.003, 0.010))
 
     def emit_log(
         self,
@@ -378,3 +417,22 @@ class OTelEmitter:
         for reader in self.metric_readers:
             reader.collect(timeout_millis=10000)
         self.meter_provider.force_flush(timeout_millis=10000)
+
+    def shutdown(self) -> None:
+        """Cleanly shut down all providers (flush + release resources)."""
+        try:
+            self.flush()
+        except Exception:
+            pass
+        try:
+            self.tracer_provider.shutdown()
+        except Exception:
+            pass
+        try:
+            self.logger_provider.shutdown()
+        except Exception:
+            pass
+        try:
+            self.meter_provider.shutdown()
+        except Exception:
+            pass

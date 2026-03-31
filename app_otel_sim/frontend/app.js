@@ -23,9 +23,9 @@ const btnStartStream = document.getElementById("btn-start-stream");
 const btnStopStream = document.getElementById("btn-stop-stream");
 const streamSpeedInput = document.getElementById("stream-speed");
 const streamSpeedValue = document.getElementById("stream-speed-value");
-const statTotalEl = document.getElementById("stat-total");
-const statRpsEl = document.getElementById("stat-rps");
-const statIncidentsEl = document.getElementById("stat-incidents");
+const statTracesEl = document.getElementById("stat-traces");
+const statLogsEl = document.getElementById("stat-logs");
+const statMetricsEl = document.getElementById("stat-metrics");
 const statConnectionEl = document.getElementById("stat-connection");
 const eventStreamEl = document.getElementById("event-stream");
 const eventCountEl = document.getElementById("event-count");
@@ -37,9 +37,9 @@ let triplets = [];
 let config = loadConfig();
 let statusResetTimer = null;
 let currentMode = "manual";
-let totalIncidents = 0;
-let totalEventsSent = 0;
-const _manualRpsWindow = [];
+let totalTraces = 0;
+let totalLogs = 0;
+let totalMetrics = 0;
 
 // Streaming engine
 const streamer = new StreamingEngine({
@@ -51,8 +51,7 @@ const streamer = new StreamingEngine({
     setStatusPill(`Stream error: ${msg}`, true);
   },
   onStatsUpdate: (stats) => {
-    statTotalEl.textContent = stats.totalEmitted;
-    statRpsEl.textContent = stats.eventsPerSecond;
+    updateSignalCounters();
   },
 });
 
@@ -96,27 +95,23 @@ function severityClass(severity) {
 
 // ---- Event Stream (bottom of page) ----
 
-function updateManualStats() {
-  const now = Date.now();
-  // Clean window to last 5 seconds
-  while (_manualRpsWindow.length && _manualRpsWindow[0] < now - 5000) _manualRpsWindow.shift();
-  let rps = 0;
-  if (_manualRpsWindow.length > 1) {
-    const elapsed = (now - _manualRpsWindow[0]) / 1000;
-    rps = elapsed > 0 ? _manualRpsWindow.length / elapsed : 0;
-  }
-  statTotalEl.textContent = totalEventsSent;
-  statRpsEl.textContent = Math.round(rps * 10) / 10;
+function updateSignalCounters() {
+  statTracesEl.textContent = totalTraces;
+  statLogsEl.textContent = totalLogs;
+  statMetricsEl.textContent = totalMetrics;
 }
 
 function addEvent(data) {
   emittedEvents.unshift(data);
   if (emittedEvents.length > 200) emittedEvents.pop();
-  totalIncidents++;
-  totalEventsSent++;
-  _manualRpsWindow.push(Date.now());
-  statIncidentsEl.textContent = totalIncidents;
-  updateManualStats();
+
+  // Count signals: each event step = 1 trace + 1 log + 1 metrics call,
+  // plus 1 incident-level metrics call per scenario
+  const steps = (data.events || []).length || 1;
+  totalTraces += steps;
+  totalLogs += steps;
+  totalMetrics += steps + 1;  // +1 for incident-level metrics
+  updateSignalCounters();
 
   // Update sidecar feeds and counters
   addSidecarFeedEntry(data);
@@ -163,7 +158,7 @@ function createEventRow(data, index) {
     <span class="ev-signals">
       <span class="ev-signal traces" title="Traces → Grafana Alloy :4320">T</span>
       <span class="ev-signal logs" title="Logs → Fluent Bit :4318">L</span>
-      <span class="ev-signal metrics" title="Metrics → Telegraf :4319">M</span>
+      <span class="ev-signal metrics" title="Metrics → Grafana Alloy :4320">M</span>
     </span>
     <span class="ev-tags">
       <span class="ev-tag priority">${data.priority}</span>
@@ -182,8 +177,10 @@ function createEventRow(data, index) {
 
 function clearStream() {
   emittedEvents.length = 0;
-  totalIncidents = 0;
-  statIncidentsEl.textContent = "0";
+  totalTraces = 0;
+  totalLogs = 0;
+  totalMetrics = 0;
+  updateSignalCounters();
   eventStreamEl.innerHTML = "";
   eventCountEl.textContent = "0 events";
   if (streamEmptyEl) {
@@ -564,7 +561,7 @@ const sidecarCards = document.getElementById("sidecar-cards");
 let sidecarPollTimer = null;
 
 // Per-collector counters and feeds (keyed by collector name slug)
-const sidecarCounters = {};  // { "fluent-bit": 3, "telegraf": 5, ... }
+const sidecarCounters = {};  // { "fluent-bit": 3, "grafana-alloy": 5, ... }
 const sidecarFeeds = {};     // { "fluent-bit": [{time, text, sevClass}], ... }
 let sidecarCollectorList = []; // cached from last API call
 const MAX_FEED_ITEMS = 5;
@@ -635,6 +632,8 @@ function renderSidecarFeeds() {
   }
 }
 
+const _openInfoPanels = new Set();
+
 function renderSidecarCards(collectors) {
   sidecarCollectorList = collectors;
   sidecarCards.innerHTML = "";
@@ -681,11 +680,19 @@ function renderSidecarCards(collectors) {
     // Wire up the info toggle
     const toggle = card.querySelector(".sidecar-info-toggle");
     if (toggle) {
+      // Restore open state
+      if (_openInfoPanels.has(slug)) {
+        const panel = card.querySelector(`#sidecar-info-${slug}`);
+        if (panel) panel.classList.remove("hidden");
+        toggle.classList.add("open");
+      }
       toggle.addEventListener("click", () => {
         const panel = card.querySelector(`#sidecar-info-${slug}`);
         if (panel) {
           panel.classList.toggle("hidden");
           toggle.classList.toggle("open");
+          if (_openInfoPanels.has(slug)) _openInfoPanels.delete(slug);
+          else _openInfoPanels.add(slug);
         }
       });
     }
@@ -693,21 +700,76 @@ function renderSidecarCards(collectors) {
   });
 }
 
+const sidecarToggleCb = document.getElementById("sidecar-toggle-cb");
+const sidecarToggleLabel = document.getElementById("sidecar-toggle-label");
+const sidecarModePill = document.getElementById("sidecar-mode-pill");
+const sidecarRouteInfo = document.getElementById("sidecar-route-info");
+
+const telemetryStreamSection = document.getElementById("telemetry-stream-section");
+
+function updateSidecarUI(sidecarMode) {
+  if (sidecarToggleCb) sidecarToggleCb.checked = sidecarMode;
+  if (sidecarToggleLabel) sidecarToggleLabel.textContent = sidecarMode ? "ON" : "OFF";
+  if (sidecarModePill) {
+    sidecarModePill.textContent = sidecarMode ? "SIDECAR MODE" : "DIRECT MODE";
+    sidecarModePill.classList.toggle("direct", !sidecarMode);
+  }
+  // Show sidecar cards in sidecar mode, telemetry stream in direct mode
+  if (sidecarCards) sidecarCards.style.display = sidecarMode ? "" : "none";
+  if (telemetryStreamSection) telemetryStreamSection.style.display = sidecarMode ? "none" : "";
+}
+
 async function loadSidecarStatus() {
   try {
     const res = await fetch("/api/sidecar-status");
     if (!res.ok) return;
     const data = await res.json();
+    updateSidecarUI(data.sidecar_mode);
     if (data.sidecar_mode) {
-      sidecarBar.classList.remove("hidden");
       renderSidecarCards(data.collectors);
       renderSidecarFeeds();
-    } else {
-      sidecarBar.classList.add("hidden");
+    }
+    // Update route info
+    const modeRes = await fetch("/api/sidecar-mode");
+    if (modeRes.ok) {
+      const modeData = await modeRes.json();
+      if (sidecarRouteInfo) {
+        const tbl = modeData.active_spans_table || "";
+        const short = tbl.split(".").pop();
+        sidecarRouteInfo.textContent = modeData.enabled
+          ? "Routing through localhost collectors"
+          : `Direct to Databricks (${short})`;
+      }
     }
   } catch (_) {
-    // Silently ignore — sidecar bar stays hidden
+    // Silently ignore
   }
+}
+
+if (sidecarToggleCb) {
+  sidecarToggleCb.addEventListener("change", async () => {
+    const enabled = sidecarToggleCb.checked;
+    sidecarToggleCb.disabled = true;
+    try {
+      const res = await fetch("/api/sidecar-mode", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        updateSidecarUI(data.enabled);
+        await loadSidecarStatus();
+      } else {
+        // Revert on failure
+        sidecarToggleCb.checked = !enabled;
+      }
+    } catch (_) {
+      sidecarToggleCb.checked = !enabled;
+    } finally {
+      sidecarToggleCb.disabled = false;
+    }
+  });
 }
 
 function startSidecarPolling() {

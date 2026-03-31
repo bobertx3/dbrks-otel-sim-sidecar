@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Launch all 5 sidecar collectors, the OTel Simulator app, and the Ops Dashboard.
+# Launch all 5 sidecar collectors, the OTel Simulator app, and the LakeEO Dashboard.
 # Ctrl+C cleanly stops all processes.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -54,7 +54,7 @@ label "Starting Fluent Bit on :4318 (logs)"
 fluent-bit -c collectors/fluent-bit/fluent-bit.yaml &
 PIDS+=($!)
 
-label "Starting Telegraf on :4319 (metrics)"
+label "Starting Telegraf on :4319 (metrics — gauges only)"
 telegraf --config collectors/telegraf/telegraf.conf &
 PIDS+=($!)
 
@@ -81,8 +81,8 @@ uvicorn backend.server:app --host 0.0.0.0 --port 8000 &
 PIDS+=($!)
 cd "$SCRIPT_DIR"
 
-label "Starting Ops Dashboard on :8001"
-cd app_otel_ops
+label "Starting LakeEO Dashboard on :8001"
+cd app_lake_eo
 uvicorn backend.server:app --host 0.0.0.0 --port 8001 &
 PIDS+=($!)
 cd "$SCRIPT_DIR"
@@ -92,14 +92,14 @@ info "=== All services running ==="
 info ""
 info "  Sidecars:"
 info "    Fluent Bit     (logs)                → localhost:4318"
-info "    Telegraf       (metrics)             → localhost:4319"
+info "    Telegraf       (metrics/gauges)      → localhost:4319"
 info "    Grafana Alloy  (logs+metrics+traces) → localhost:4320"
 info "    Vector         (logs+metrics)        → localhost:4322"
 info "    OTel Collector (logs+metrics+traces) → localhost:4323"
 info ""
 info "  Apps:"
 info "    Simulator      → http://localhost:8000"
-info "    Ops Dashboard  → http://localhost:8001"
+info "    LakeEO Dashboard  → http://localhost:8001"
 info ""
 info "Press Ctrl+C to stop all services."
 echo ""

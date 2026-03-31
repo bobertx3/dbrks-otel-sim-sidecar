@@ -21,7 +21,7 @@ from databricks import sql
 from .emitter import EmitterConfig, OTelEmitter, SIDECAR_COLLECTORS
 from .models import (
     Domain, EmitResponse, EmitRandomResponse, EventDefinition,
-    GenieAskRequest, GenieAskResponse, IncidentEvent,
+    IncidentEvent,
     StreamingConfig, TripletResponse, ComponentResponse,
 )
 from .scenarios import ScenarioCatalog
@@ -38,7 +38,6 @@ load_dotenv(APP_DIR.parent / ".env")  # .env at repo root
 logger = logging.getLogger(__name__)
 cfg = EmitterConfig.from_env()
 emitter = OTelEmitter(cfg)
-GENIE_SPACE_ID = os.getenv("GENIE_SPACE_ID", "01f11cbdc1b21b06b17d10fa4f58a5f1")
 catalog = ScenarioCatalog()
 streaming_config = StreamingConfig()
 
@@ -312,27 +311,6 @@ def _rows_to_dicts(columns: list[str], rows: list[tuple[Any, ...]]) -> list[dict
     return out
 
 
-def _genie_request(method: str, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    url = f"{cfg.databricks_host}{path}"
-    data = None if payload is None else json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        url=url,
-        method=method,
-        data=data,
-        headers={
-            "Authorization": f"Bearer {cfg.databricks_token}",
-            "Content-Type": "application/json",
-        },
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            raw = resp.read().decode("utf-8")
-            return json.loads(raw) if raw else {}
-    except urllib.error.HTTPError as e:
-        detail = e.read().decode("utf-8", "ignore")
-        raise HTTPException(status_code=e.code, detail=detail) from e
-
-
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -387,6 +365,41 @@ def sidecar_status() -> dict[str, Any]:
     }
 
 
+@app.get("/api/sidecar-mode")
+def get_sidecar_mode() -> dict[str, Any]:
+    """Return current sidecar mode state."""
+    return {
+        "enabled": emitter.sidecar_mode,
+        "active_spans_table": emitter._active_spans_table,
+        "active_logs_table": emitter._active_logs_table,
+        "active_metrics_table": emitter._active_metrics_table,
+    }
+
+
+@app.post("/api/sidecar-mode")
+def set_sidecar_mode(body: dict[str, Any]) -> dict[str, Any]:
+    """Toggle sidecar mode on/off. Shuts down old emitter and creates a new one."""
+    global emitter
+    enabled = body.get("enabled")
+    if enabled is None:
+        raise HTTPException(status_code=400, detail="'enabled' field is required")
+
+    # Shut down the current emitter cleanly
+    emitter.shutdown()
+
+    # Re-create emitter with the new mode
+    emitter = OTelEmitter(cfg, sidecar_mode=bool(enabled))
+    logger.info(f"Sidecar mode toggled to: {enabled}")
+
+    return {
+        "status": "ok",
+        "enabled": emitter.sidecar_mode,
+        "active_spans_table": emitter._active_spans_table,
+        "active_logs_table": emitter._active_logs_table,
+        "active_metrics_table": emitter._active_metrics_table,
+    }
+
+
 @app.get("/api/config-info")
 def config_info() -> dict[str, str]:
     wh = _warehouse_id()
@@ -396,9 +409,13 @@ def config_info() -> dict[str, str]:
     )
     return {
         "databricks_host": cfg.databricks_host,
-        "spans_table": cfg.spans_table,
-        "logs_table": cfg.logs_table,
-        "metrics_table": cfg.metrics_table,
+        "direct_spans_table": cfg.direct_spans_table,
+        "direct_logs_table": cfg.direct_logs_table,
+        "direct_metrics_table": cfg.direct_metrics_table,
+        "active_spans_table": emitter._active_spans_table,
+        "active_logs_table": emitter._active_logs_table,
+        "active_metrics_table": emitter._active_metrics_table,
+        "sidecar_mode": str(emitter.sidecar_mode).lower(),
         "traces_endpoint": emitter.traces_endpoint,
         "logs_endpoint": emitter.logs_endpoint,
         "metrics_endpoint": emitter.metrics_endpoint,
@@ -441,9 +458,9 @@ def emit_event(domain: Domain, event_key: str) -> EmitResponse:
 @app.get("/api/summary")
 def telemetry_summary() -> dict[str, Any]:
     count_query = f"""
-    SELECT 'spans' AS table_name, COUNT(*) AS record_count FROM {cfg.spans_table}
+    SELECT 'spans' AS table_name, COUNT(*) AS record_count FROM {cfg.direct_spans_table}
     UNION ALL
-    SELECT 'logs' AS table_name, COUNT(*) AS record_count FROM {cfg.logs_table}
+    SELECT 'logs' AS table_name, COUNT(*) AS record_count FROM {cfg.direct_logs_table}
     """
     cols, rows = _run_sql(count_query)
     counts = _rows_to_dicts(cols, rows)
@@ -451,10 +468,10 @@ def telemetry_summary() -> dict[str, Any]:
     preview_query = f"""
     SELECT * FROM (
       SELECT 'spans' AS source, time, service_name, name AS item_name, NULL AS severity, NULL AS metric_type
-      FROM {cfg.spans_table}
+      FROM {cfg.direct_spans_table}
       UNION ALL
       SELECT 'logs' AS source, time, service_name, severity_text AS item_name, severity_text AS severity, NULL AS metric_type
-      FROM {cfg.logs_table}
+      FROM {cfg.direct_logs_table}
     ) q
     ORDER BY time DESC NULLS LAST
     LIMIT 100
@@ -475,85 +492,6 @@ def telemetry_query(body: dict[str, str]) -> dict[str, Any]:
     return {"columns": cols, "rows": _rows_to_dicts(cols, rows)}
 
 
-@app.post("/api/genie/ask", response_model=GenieAskResponse)
-def ask_genie(req: GenieAskRequest) -> GenieAskResponse:
-    if not GENIE_SPACE_ID:
-        raise HTTPException(status_code=400, detail="GENIE_SPACE_ID is not configured")
-
-    if req.conversation_id:
-        start_resp = _genie_request(
-            "POST",
-            f"/api/2.0/genie/spaces/{GENIE_SPACE_ID}/conversations/{req.conversation_id}/messages",
-            {"content": req.question},
-        )
-        conversation_id = req.conversation_id
-        message = start_resp.get("message", {})
-        message_id = message.get("id")
-    else:
-        start_resp = _genie_request(
-            "POST",
-            f"/api/2.0/genie/spaces/{GENIE_SPACE_ID}/start-conversation",
-            {"content": req.question},
-        )
-        conversation_id = start_resp.get("conversation", {}).get("id")
-        message_id = start_resp.get("message", {}).get("id")
-
-    if not conversation_id or not message_id:
-        raise HTTPException(status_code=502, detail="Genie did not return conversation/message IDs")
-
-    final_msg: dict[str, Any] = {}
-    for _ in range(30):
-        msg = _genie_request(
-            "GET",
-            f"/api/2.0/genie/spaces/{GENIE_SPACE_ID}/conversations/{conversation_id}/messages/{message_id}",
-        )
-        status = msg.get("status", "")
-        if status in {"COMPLETED", "FAILED", "CANCELLED"}:
-            final_msg = msg
-            break
-        time.sleep(1.0)
-    else:
-        raise HTTPException(status_code=504, detail="Timed out waiting for Genie response")
-
-    if final_msg.get("status") != "COMPLETED":
-        raise HTTPException(status_code=502, detail=final_msg.get("error") or "Genie request failed")
-
-    text_response = None
-    sql_query = None
-    rows: list[dict[str, Any]] = []
-
-    attachments = final_msg.get("attachments") or []
-    for item in attachments:
-        if item.get("text"):
-            text_response = item.get("text", {}).get("content")
-        if item.get("query"):
-            sql_query = item.get("query", {}).get("query")
-            attachment_id = item.get("attachment_id")
-            if attachment_id:
-                qres = _genie_request(
-                    "GET",
-                    f"/api/2.0/genie/spaces/{GENIE_SPACE_ID}/conversations/{conversation_id}/messages/{message_id}/attachments/{attachment_id}/query-result",
-                )
-                rows_data = (
-                    qres.get("statement_response", {})
-                    .get("result", {})
-                    .get("data_array", [])
-                )
-                if rows_data and isinstance(rows_data, list):
-                    rows = [{"values": row} for row in rows_data[:100]]
-            break
-
-    return GenieAskResponse(
-        status="COMPLETED",
-        question=req.question,
-        conversation_id=conversation_id,
-        message_id=message_id,
-        text_response=text_response,
-        sql_query=sql_query,
-        rows=rows,
-    )
-
-
 def _all_sidecar_tables() -> list[str]:
     """Collect all table names from sidecar collector definitions."""
     tables = []
@@ -562,8 +500,6 @@ def _all_sidecar_tables() -> list[str]:
             prefix = c["name"].lower().replace(" ", "").replace("otelcollector", "otelcol")
             if c["name"] == "Fluent Bit":
                 prefix = "fluentbit"
-            elif c["name"] == "Telegraf":
-                prefix = "telegraf"
             elif c["name"] == "Grafana Alloy":
                 prefix = "alloy"
             elif c["name"] == "Vector":
@@ -579,10 +515,19 @@ def _all_sidecar_tables() -> list[str]:
     return tables
 
 
+def _all_tables() -> list[str]:
+    """All tables including sidecar and direct."""
+    tables = _all_sidecar_tables()
+    tables.append(cfg.direct_spans_table)
+    tables.append(cfg.direct_logs_table)
+    tables.append(cfg.direct_metrics_table)
+    return tables
+
+
 @app.get("/api/table-counts")
 def table_counts() -> dict[str, Any]:
-    """Return row counts for all collector tables."""
-    tables = _all_sidecar_tables()
+    """Return row counts for all collector and direct tables."""
+    tables = _all_tables()
     parts = [f"SELECT '{t}' AS tbl, COUNT(*) AS cnt FROM {t}" for t in tables]
     query = " UNION ALL ".join(parts)
     cols, rows = _run_sql(query)
@@ -596,17 +541,17 @@ def table_counts() -> dict[str, Any]:
     return {
         "tables": result,
         "total": total,
-        "spans_table": cfg.spans_table,
-        "logs_table": cfg.logs_table,
-        "metrics_table": cfg.metrics_table,
+        "direct_spans_table": cfg.direct_spans_table,
+        "direct_logs_table": cfg.direct_logs_table,
+        "direct_metrics_table": cfg.direct_metrics_table,
         "counts": {"spans": 0, "logs": 0, "metrics": 0},
     }
 
 
 @app.post("/api/truncate-tables")
 def truncate_tables() -> dict[str, Any]:
-    """Truncate all collector tables and return rows deleted."""
-    tables = _all_sidecar_tables()
+    """Truncate all collector and direct tables and return rows deleted."""
+    tables = _all_tables()
     # Get counts before
     parts = [f"SELECT '{t}' AS tbl, COUNT(*) AS cnt FROM {t}" for t in tables]
     query = " UNION ALL ".join(parts)
