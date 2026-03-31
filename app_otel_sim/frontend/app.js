@@ -118,6 +118,9 @@ function addEvent(data) {
   statIncidentsEl.textContent = totalIncidents;
   updateManualStats();
 
+  // Update sidecar feeds and counters
+  addSidecarFeedEntry(data);
+
   // Hide empty state
   if (streamEmptyEl) streamEmptyEl.style.display = "none";
 
@@ -157,6 +160,11 @@ function createEventRow(data, index) {
     <span class="ev-level-dot ${sevClass}"></span>
     <span class="ev-label">${data.scenario_label}</span>
     <span class="ev-detail">${eventLabels}</span>
+    <span class="ev-signals">
+      <span class="ev-signal traces" title="Traces → Grafana Alloy :4320">T</span>
+      <span class="ev-signal logs" title="Logs → Fluent Bit :4318">L</span>
+      <span class="ev-signal metrics" title="Metrics → Telegraf :4319">M</span>
+    </span>
     <span class="ev-tags">
       <span class="ev-tag priority">${data.priority}</span>
       ${data.sla_breach ? '<span class="ev-tag sla">SLA</span>' : ""}
@@ -441,18 +449,14 @@ function openRefreshModal() {
       refreshCounts.style.display = "";
       refreshTableBody.innerHTML = "";
       let total = 0;
-      const tables = [
-        { key: "spans", name: data.spans_table },
-        { key: "logs", name: data.logs_table },
-        { key: "metrics", name: data.metrics_table },
-      ];
-      tables.forEach(({ key, name }) => {
-        const count = data.counts[key] || 0;
+      // New format: data.tables is { "telemetry.otel.xyz": count, ... }
+      const tableData = data.tables || {};
+      for (const [name, count] of Object.entries(tableData)) {
         total += count;
         const tr = document.createElement("tr");
         tr.innerHTML = `<td>${name}</td><td>${count.toLocaleString()}</td>`;
         refreshTableBody.appendChild(tr);
-      });
+      }
       refreshTotalCount.textContent = total.toLocaleString();
     })
     .catch((err) => {
@@ -553,6 +557,164 @@ streamSpeedInput.addEventListener("input", (e) => {
   }
 });
 
+// ---- Sidecar Status ----
+
+const sidecarBar = document.getElementById("sidecar-bar");
+const sidecarCards = document.getElementById("sidecar-cards");
+let sidecarPollTimer = null;
+
+// Per-collector counters and feeds (keyed by collector name slug)
+const sidecarCounters = {};  // { "fluent-bit": 3, "telegraf": 5, ... }
+const sidecarFeeds = {};     // { "fluent-bit": [{time, text, sevClass}], ... }
+let sidecarCollectorList = []; // cached from last API call
+const MAX_FEED_ITEMS = 5;
+
+function _slug(name) { return name.toLowerCase().replace(/\s+/g, "-"); }
+
+function addSidecarFeedEntry(data) {
+  const time = formatTime(data.timestamp);
+  const events = data.events || [];
+  const sevClass = severityClass(data.severity);
+
+  events.forEach((ev) => {
+    const domain = ev.domain || "app";
+    const key = ev.event_key || "";
+    const label = ev.event_label || data.scenario_label;
+    const route = `/sim/${domain}/${key}`;
+
+    // Feed each collector based on which signals it handles
+    for (const c of sidecarCollectorList) {
+      const slug = _slug(c.name);
+      if (!sidecarFeeds[slug]) sidecarFeeds[slug] = [];
+      if (!sidecarCounters[slug]) sidecarCounters[slug] = 0;
+
+      const signals = c.signals || [];
+      // Pick the most relevant feed text per signal type
+      let text = null;
+      if (signals.includes("traces") && signals.includes("logs") && signals.includes("metrics")) {
+        text = `${label} | ${domain}::${key}`;
+      } else if (signals.includes("logs") && !signals.includes("traces")) {
+        text = `${domain}::${key}`;
+      } else if (signals.includes("metrics") && !signals.includes("logs")) {
+        text = `latency_ms → ${route}`;
+      } else if (signals.includes("traces")) {
+        text = label;
+      }
+      if (text) {
+        sidecarFeeds[slug].unshift({ time, text, sevClass });
+        if (sidecarFeeds[slug].length > MAX_FEED_ITEMS) sidecarFeeds[slug].length = MAX_FEED_ITEMS;
+        sidecarCounters[slug]++;
+      }
+    }
+  });
+
+  renderSidecarFeeds();
+}
+
+function renderSidecarFeeds() {
+  for (const c of sidecarCollectorList) {
+    const slug = _slug(c.name);
+    const countEl = document.getElementById(`sidecar-count-${slug}`);
+    if (countEl) countEl.textContent = sidecarCounters[slug] || 0;
+
+    const feedEl = document.getElementById(`sidecar-feed-${slug}`);
+    if (!feedEl) continue;
+
+    const entries = sidecarFeeds[slug] || [];
+    feedEl.innerHTML = "";
+    if (entries.length === 0) {
+      feedEl.innerHTML = '<div class="feed-empty">Waiting for events...</div>';
+      continue;
+    }
+    entries.forEach((entry, i) => {
+      const row = document.createElement("div");
+      row.className = `feed-row ${entry.sevClass}${i === 0 ? " feed-newest" : ""}`;
+      row.innerHTML = `<span class="feed-time">${entry.time}</span><span class="feed-text">${entry.text}</span>`;
+      feedEl.appendChild(row);
+    });
+  }
+}
+
+function renderSidecarCards(collectors) {
+  sidecarCollectorList = collectors;
+  sidecarCards.innerHTML = "";
+  collectors.forEach((c) => {
+    const slug = _slug(c.name);
+    const card = document.createElement("div");
+    const state = c.healthy ? "healthy" : "unhealthy";
+    card.className = `sidecar-card ${state}`;
+    const count = sidecarCounters[slug] || 0;
+    const signals = (c.signals || []).map(
+      (s) => `<span class="signal-type ${s}">${s}</span>`
+    ).join(" ");
+    const infoText = c.info || "";
+    const configFmt = c.config_format || "";
+    const configLines = c.config_lines || "";
+    card.innerHTML = `
+      <div class="sidecar-card-header">
+        <span class="sidecar-dot ${state}"></span>
+        <div class="sidecar-info">
+          <div class="sidecar-name">${c.name}</div>
+          <div class="sidecar-signal">
+            ${signals} &middot; :${c.port}
+          </div>
+        </div>
+        <div style="text-align:right">
+          <div class="sidecar-counter"><span class="sidecar-count" id="sidecar-count-${slug}">${count}</span> forwarded</div>
+          <span class="sidecar-status-label ${state}">${c.healthy ? "Running" : "Offline"}</span>
+        </div>
+      </div>
+      <div class="sidecar-feed" id="sidecar-feed-${slug}">
+        <div class="feed-empty">Waiting for events...</div>
+      </div>
+      ${infoText ? `
+      <button type="button" class="sidecar-info-toggle" data-slug="${slug}">
+        <span class="info-toggle-icon">&#9432;</span> About this collector
+      </button>
+      <div class="sidecar-info-panel hidden" id="sidecar-info-${slug}">
+        <p class="sidecar-info-text">${infoText}</p>
+        ${configFmt ? `<div class="sidecar-info-meta">Config: <strong>${configFmt}</strong> &middot; ~${configLines} lines to add Databricks output</div>` : ""}
+      </div>
+      ` : ""}
+    `;
+
+    // Wire up the info toggle
+    const toggle = card.querySelector(".sidecar-info-toggle");
+    if (toggle) {
+      toggle.addEventListener("click", () => {
+        const panel = card.querySelector(`#sidecar-info-${slug}`);
+        if (panel) {
+          panel.classList.toggle("hidden");
+          toggle.classList.toggle("open");
+        }
+      });
+    }
+    sidecarCards.appendChild(card);
+  });
+}
+
+async function loadSidecarStatus() {
+  try {
+    const res = await fetch("/api/sidecar-status");
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data.sidecar_mode) {
+      sidecarBar.classList.remove("hidden");
+      renderSidecarCards(data.collectors);
+      renderSidecarFeeds();
+    } else {
+      sidecarBar.classList.add("hidden");
+    }
+  } catch (_) {
+    // Silently ignore — sidecar bar stays hidden
+  }
+}
+
+function startSidecarPolling() {
+  loadSidecarStatus();
+  sidecarPollTimer = setInterval(loadSidecarStatus, 5000);
+}
+
 // ---- Boot ----
 
 (async () => {
@@ -568,6 +730,7 @@ streamSpeedInput.addEventListener("input", (e) => {
     }
     initSettings();
     loadDataflowInfo();
+    startSidecarPolling();
   } catch (err) {
     healthPillEl.textContent = "API Unreachable";
     console.error("Init error:", err);

@@ -1,0 +1,59 @@
+# OpenTelemetry Collector — All signals collector sidecar
+# Receives OTLP on localhost:4323 (HTTP) and :4324 (gRPC),
+# forwards logs, metrics, and traces to Databricks.
+#
+# Environment variables (set by start-sidecars.sh):
+#   DATABRICKS_HOST_BARE  — workspace host without https://
+#   DATABRICKS_TOKEN      — PAT or OAuth token
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: "0.0.0.0:4323"
+      grpc:
+        endpoint: "0.0.0.0:4324"
+
+processors:
+  batch:
+    timeout: 2s
+
+exporters:
+  otlphttp/logs:
+    endpoint: "https://${DATABRICKS_HOST_BARE}"
+    logs_endpoint: "https://${DATABRICKS_HOST_BARE}/api/2.0/tracing/otel/v1/logs"
+    headers:
+      Authorization: "Bearer ${DATABRICKS_TOKEN}"
+      X-Databricks-UC-Table-Name: "telemetry.otel.otelcol_otel_logs_v2"
+      X-Databricks-Workspace-Url: "https://${DATABRICKS_HOST_BARE}"
+
+  otlphttp/metrics:
+    endpoint: "https://${DATABRICKS_HOST_BARE}"
+    metrics_endpoint: "https://${DATABRICKS_HOST_BARE}/api/2.0/otel/v1/metrics"
+    headers:
+      Authorization: "Bearer ${DATABRICKS_TOKEN}"
+      X-Databricks-UC-Table-Name: "telemetry.otel.otelcol_otel_metrics"
+      X-Databricks-Workspace-Url: "https://${DATABRICKS_HOST_BARE}"
+
+  otlphttp/traces:
+    endpoint: "https://${DATABRICKS_HOST_BARE}"
+    traces_endpoint: "https://${DATABRICKS_HOST_BARE}/api/2.0/tracing/otel/v1/traces"
+    headers:
+      Authorization: "Bearer ${DATABRICKS_TOKEN}"
+      X-Databricks-UC-Table-Name: "telemetry.otel.otelcol_otel_spans_v2"
+      X-Databricks-Workspace-Url: "https://${DATABRICKS_HOST_BARE}"
+
+service:
+  pipelines:
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlphttp/logs]
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlphttp/metrics]
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlphttp/traces]

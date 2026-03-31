@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.requests import Request
 from databricks import sql
 
-from .emitter import EmitterConfig, OTelEmitter
+from .emitter import EmitterConfig, OTelEmitter, SIDECAR_COLLECTORS
 from .models import (
     Domain, EmitResponse, EmitRandomResponse, EventDefinition,
     GenieAskRequest, GenieAskResponse, IncidentEvent,
@@ -338,6 +338,55 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/api/sidecar-status")
+def sidecar_status() -> dict[str, Any]:
+    """Check health of each sidecar collector. Returns status for the UI."""
+    import socket
+
+    sidecar_mode = emitter.sidecar_mode
+
+    def _probe_tcp(host: str, port: int, timeout: float = 0.5) -> bool:
+        try:
+            with socket.create_connection((host, port), timeout=timeout):
+                return True
+        except (OSError, socket.timeout):
+            return False
+
+    def _probe_http(url: str, timeout: float = 1.0) -> bool:
+        try:
+            req = urllib.request.Request(url, method="GET")
+            with urllib.request.urlopen(req, timeout=timeout):
+                return True
+        except Exception:
+            return False
+
+    collectors = []
+    for c in SIDECAR_COLLECTORS:
+        if sidecar_mode:
+            if c["name"] == "Fluent Bit":
+                healthy = _probe_http("http://localhost:2020/api/v1/uptime")
+            else:
+                healthy = _probe_tcp("localhost", c["port"])
+        else:
+            healthy = False
+
+        collectors.append({
+            "name": c["name"],
+            "signals": c["signals"],
+            "port": c["port"],
+            "healthy": healthy,
+            "description": c["description"],
+            "info": c.get("info", ""),
+            "config_format": c.get("config_format", ""),
+            "config_lines": c.get("config_lines", ""),
+        })
+
+    return {
+        "sidecar_mode": sidecar_mode,
+        "collectors": collectors,
+    }
+
+
 @app.get("/api/config-info")
 def config_info() -> dict[str, str]:
     wh = _warehouse_id()
@@ -505,46 +554,69 @@ def ask_genie(req: GenieAskRequest) -> GenieAskResponse:
     )
 
 
+def _all_sidecar_tables() -> list[str]:
+    """Collect all table names from sidecar collector definitions."""
+    tables = []
+    for c in SIDECAR_COLLECTORS:
+        for signal in c["signals"]:
+            prefix = c["name"].lower().replace(" ", "").replace("otelcollector", "otelcol")
+            if c["name"] == "Fluent Bit":
+                prefix = "fluentbit"
+            elif c["name"] == "Telegraf":
+                prefix = "telegraf"
+            elif c["name"] == "Grafana Alloy":
+                prefix = "alloy"
+            elif c["name"] == "Vector":
+                prefix = "vector"
+            elif c["name"] == "OTel Collector":
+                prefix = "otelcol"
+            if signal == "logs":
+                tables.append(f"telemetry.otel.{prefix}_otel_logs_v2")
+            elif signal == "metrics":
+                tables.append(f"telemetry.otel.{prefix}_otel_metrics")
+            elif signal == "traces":
+                tables.append(f"telemetry.otel.{prefix}_otel_spans_v2")
+    return tables
+
+
 @app.get("/api/table-counts")
 def table_counts() -> dict[str, Any]:
-    """Return row counts for all three OTel tables."""
-    query = f"""
-    SELECT 'spans' AS tbl, COUNT(*) AS cnt FROM {cfg.spans_table}
-    UNION ALL
-    SELECT 'logs' AS tbl, COUNT(*) AS cnt FROM {cfg.logs_table}
-    UNION ALL
-    SELECT 'metrics' AS tbl, COUNT(*) AS cnt FROM {cfg.metrics_table}
-    """
+    """Return row counts for all collector tables."""
+    tables = _all_sidecar_tables()
+    parts = [f"SELECT '{t}' AS tbl, COUNT(*) AS cnt FROM {t}" for t in tables]
+    query = " UNION ALL ".join(parts)
     cols, rows = _run_sql(query)
     result = {}
+    total = 0
     for row in rows:
-        result[str(row[0])] = int(row[1])
+        name = str(row[0])
+        cnt = int(row[1])
+        result[name] = cnt
+        total += cnt
     return {
+        "tables": result,
+        "total": total,
         "spans_table": cfg.spans_table,
         "logs_table": cfg.logs_table,
         "metrics_table": cfg.metrics_table,
-        "counts": result,
+        "counts": {"spans": 0, "logs": 0, "metrics": 0},
     }
 
 
 @app.post("/api/truncate-tables")
 def truncate_tables() -> dict[str, Any]:
-    """Truncate all three OTel tables and return rows deleted."""
-    # Get counts before truncation
-    count_query = f"""
-    SELECT 'spans' AS tbl, COUNT(*) AS cnt FROM {cfg.spans_table}
-    UNION ALL
-    SELECT 'logs' AS tbl, COUNT(*) AS cnt FROM {cfg.logs_table}
-    UNION ALL
-    SELECT 'metrics' AS tbl, COUNT(*) AS cnt FROM {cfg.metrics_table}
-    """
-    _, count_rows = _run_sql(count_query)
+    """Truncate all collector tables and return rows deleted."""
+    tables = _all_sidecar_tables()
+    # Get counts before
+    parts = [f"SELECT '{t}' AS tbl, COUNT(*) AS cnt FROM {t}" for t in tables]
+    query = " UNION ALL ".join(parts)
+    cols, count_rows = _run_sql(query)
     before = {}
     for row in count_rows:
         before[str(row[0])] = int(row[1])
 
     # Truncate each table
-    for table in [cfg.spans_table, cfg.logs_table, cfg.metrics_table]:
+    for table in tables:
         _run_sql(f"TRUNCATE TABLE {table}")
 
     return {

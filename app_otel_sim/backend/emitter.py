@@ -9,6 +9,9 @@ from opentelemetry import metrics, trace
 from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
 from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import (
+    OTLPMetricExporter as OTLPMetricExporterGrpc,
+)
 from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
 from opentelemetry.sdk._logs.export import SimpleLogRecordProcessor
 from opentelemetry.sdk.metrics import MeterProvider
@@ -16,6 +19,92 @@ from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+
+
+# Sidecar collector definitions: which signals each collector handles
+SIDECAR_COLLECTORS = [
+    {
+        "name": "Fluent Bit",
+        "signals": ["logs"],
+        "port": 4318,
+        "protocol": "http",
+        "description": "Lightweight, C-based log processor",
+        "info": (
+            "Fluent Bit is a super-lightweight log processor and forwarder written in C. "
+            "It's the de facto standard for log collection in Kubernetes — deployed as a "
+            "DaemonSet on every node. With a ~1MB footprint and 300+ plugins, it tails "
+            "container logs, parses them, and routes to any backend. Purpose-built for logs, "
+            "not metrics or traces."
+        ),
+        "config_format": "YAML",
+        "config_lines": "~12",
+    },
+    {
+        "name": "Telegraf",
+        "signals": ["metrics"],
+        "port": 4319,
+        "protocol": "grpc",
+        "description": "InfluxData plugin-driven metrics agent",
+        "info": (
+            "Telegraf is InfluxData's open-source metrics collection agent with 300+ input "
+            "and 60+ output plugins. It's the go-to agent for infrastructure monitoring — "
+            "collecting system metrics, database stats, and application metrics. Commonly "
+            "paired with InfluxDB, Prometheus, or Datadog. Purpose-built for metrics, "
+            "not logs or traces."
+        ),
+        "config_format": "TOML",
+        "config_lines": "~10",
+    },
+    {
+        "name": "Grafana Alloy",
+        "signals": ["logs", "metrics", "traces"],
+        "port": 4320,
+        "protocol": "http",
+        "description": "Grafana's OpenTelemetry-native collector",
+        "info": (
+            "Grafana Alloy (successor to Grafana Agent) is an OpenTelemetry-native collector "
+            "that handles all three signal types. It's designed for the Grafana ecosystem "
+            "(Loki, Mimir, Tempo) but works with any OTLP-compatible backend. Uses a "
+            "component-based pipeline model with its own 'River' config language. "
+            "Good choice for teams already using Grafana Cloud."
+        ),
+        "config_format": "River",
+        "config_lines": "~15",
+    },
+    {
+        "name": "Vector",
+        "signals": ["logs"],
+        "port": 4322,
+        "protocol": "http",
+        "description": "Rust-based, high-performance data pipeline",
+        "info": (
+            "Vector is a high-performance observability data pipeline written in Rust by "
+            "Datadog. It excels at log collection and transformation with very low resource "
+            "usage and high throughput — often used as a Logstash replacement. Features a "
+            "powerful transform layer (VRL — Vector Remap Language) for parsing and enriching "
+            "data in-flight. OTLP metrics forwarding has limitations."
+        ),
+        "config_format": "YAML/TOML",
+        "config_lines": "~10",
+    },
+    {
+        "name": "OTel Collector",
+        "signals": ["logs", "metrics", "traces"],
+        "port": 4323,
+        "protocol": "http",
+        "description": "The reference OTel Collector implementation",
+        "info": (
+            "The OpenTelemetry Collector is the official, vendor-neutral reference "
+            "implementation from the CNCF OpenTelemetry project. It handles all three "
+            "signal types natively and is the most widely deployed OTel collector. "
+            "Extensible via receivers, processors, and exporters. The 'contrib' distribution "
+            "includes 200+ community-maintained components. The standard choice for "
+            "greenfield OTel deployments."
+        ),
+        "config_format": "YAML",
+        "config_lines": "~8",
+    },
+]
 
 
 @dataclass(frozen=True)
@@ -72,9 +161,7 @@ class EmitterConfig:
 class OTelEmitter:
     def __init__(self, cfg: EmitterConfig) -> None:
         self.cfg = cfg
-        self.traces_endpoint = f"{cfg.databricks_host}/api/2.0/tracing/otel/v1/traces"
-        self.logs_endpoint = f"{cfg.databricks_host}/api/2.0/tracing/otel/v1/logs"
-        self.metrics_endpoint = f"{cfg.databricks_host}/api/2.0/otel/v1/metrics"
+        self.sidecar_mode = os.getenv("OTEL_SIDECAR_MODE", "false").lower() in ("true", "1", "yes")
 
         resource = Resource.create(
             {
@@ -84,18 +171,39 @@ class OTelEmitter:
             }
         )
 
-        span_exporter = OTLPSpanExporter(
-            endpoint=self.traces_endpoint, headers=self._headers(cfg.spans_table)
-        )
+        # --- Traces ---
         self.tracer_provider = TracerProvider(resource=resource)
-        self.tracer_provider.add_span_processor(SimpleSpanProcessor(span_exporter))
+        if self.sidecar_mode:
+            for c in SIDECAR_COLLECTORS:
+                if "traces" in c["signals"]:
+                    exp = OTLPSpanExporter(
+                        endpoint=f"http://localhost:{c['port']}/v1/traces", headers={}
+                    )
+                    self.tracer_provider.add_span_processor(SimpleSpanProcessor(exp))
+        else:
+            self.traces_endpoint = f"{cfg.databricks_host}/api/2.0/tracing/otel/v1/traces"
+            exp = OTLPSpanExporter(
+                endpoint=self.traces_endpoint, headers=self._headers(cfg.spans_table)
+            )
+            self.tracer_provider.add_span_processor(SimpleSpanProcessor(exp))
         self.tracer = self.tracer_provider.get_tracer(cfg.service_name)
 
-        log_exporter = OTLPLogExporter(
-            endpoint=self.logs_endpoint, headers=self._headers(cfg.logs_table)
-        )
+        # --- Logs ---
         self.logger_provider = LoggerProvider(resource=resource)
-        self.logger_provider.add_log_record_processor(SimpleLogRecordProcessor(log_exporter))
+        if self.sidecar_mode:
+            for c in SIDECAR_COLLECTORS:
+                if "logs" in c["signals"]:
+                    exp = OTLPLogExporter(
+                        endpoint=f"http://localhost:{c['port']}/v1/logs", headers={}
+                    )
+                    self.logger_provider.add_log_record_processor(SimpleLogRecordProcessor(exp))
+        else:
+            self.logs_endpoint = f"{cfg.databricks_host}/api/2.0/tracing/otel/v1/logs"
+            exp = OTLPLogExporter(
+                endpoint=self.logs_endpoint, headers=self._headers(cfg.logs_table)
+            )
+            self.logger_provider.add_log_record_processor(SimpleLogRecordProcessor(exp))
+
         self.otel_handler = LoggingHandler(
             level=logging.INFO, logger_provider=self.logger_provider
         )
@@ -104,16 +212,31 @@ class OTelEmitter:
         self.logger.addHandler(self.otel_handler)
         self.logger.setLevel(logging.INFO)
 
-        metric_exporter = OTLPMetricExporter(
-            endpoint=self.metrics_endpoint, headers=self._headers(cfg.metrics_table)
-        )
-        # Keep periodic export effectively disabled; metrics are exported on interaction
-        # when flush() is called from the simulator emit endpoint.
-        self.metric_reader = PeriodicExportingMetricReader(
-            metric_exporter, export_interval_millis=86_400_000
-        )
+        # --- Metrics ---
+        self.metric_readers: list[PeriodicExportingMetricReader] = []
+        if self.sidecar_mode:
+            for c in SIDECAR_COLLECTORS:
+                if "metrics" in c["signals"]:
+                    if c["protocol"] == "grpc":
+                        exp = OTLPMetricExporterGrpc(
+                            endpoint=f"localhost:{c['port']}", insecure=True
+                        )
+                    else:
+                        exp = OTLPMetricExporter(
+                            endpoint=f"http://localhost:{c['port']}/v1/metrics", headers={}
+                        )
+                    reader = PeriodicExportingMetricReader(exp, export_interval_millis=86_400_000)
+                    self.metric_readers.append(reader)
+        else:
+            self.metrics_endpoint = f"{cfg.databricks_host}/api/2.0/otel/v1/metrics"
+            exp = OTLPMetricExporter(
+                endpoint=self.metrics_endpoint, headers=self._headers(cfg.metrics_table)
+            )
+            reader = PeriodicExportingMetricReader(exp, export_interval_millis=86_400_000)
+            self.metric_readers.append(reader)
+
         self.meter_provider = MeterProvider(
-            resource=resource, metric_readers=[self.metric_reader]
+            resource=resource, metric_readers=self.metric_readers
         )
         self.meter = self.meter_provider.get_meter(cfg.service_name)
 
@@ -160,16 +283,23 @@ class OTelEmitter:
         attributes: dict[str, object],
         child_name: str | None = None,
     ) -> None:
+        import time
+        import random
+
         with self.tracer.start_as_current_span(
             name=label,
             attributes={"domain": domain, "event": event, **attributes},
         ) as parent:
             parent.add_event("simulator.triggered", {"event.label": label})
+            # Simulate realistic span duration
+            time.sleep(random.uniform(0.01, 0.05))
             if child_name:
                 with self.tracer.start_as_current_span(
                     child_name, attributes={"component": child_name, **attributes}
                 ) as child:
                     child.add_event("simulator.child_step")
+                    time.sleep(random.uniform(0.005, 0.025))
+            time.sleep(random.uniform(0.005, 0.015))
 
     def emit_log(
         self,
@@ -245,6 +375,6 @@ class OTelEmitter:
     def flush(self) -> None:
         self.tracer_provider.force_flush(timeout_millis=10000)
         self.logger_provider.force_flush(timeout_millis=10000)
-        self.metric_reader.collect(timeout_millis=10000)
+        for reader in self.metric_readers:
+            reader.collect(timeout_millis=10000)
         self.meter_provider.force_flush(timeout_millis=10000)
-

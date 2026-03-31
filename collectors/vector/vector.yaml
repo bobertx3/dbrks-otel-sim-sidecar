@@ -1,0 +1,32 @@
+# Vector — Logs + Metrics collector sidecar
+# Receives OTLP on localhost:4322, forwards logs and metrics to Databricks.
+#
+# Environment variables (set by start-sidecars.sh):
+#   DATABRICKS_HOST_BARE  — workspace host without https://
+#   DATABRICKS_TOKEN      — PAT or OAuth token
+
+sources:
+  otlp:
+    type: opentelemetry
+    grpc:
+      address: "0.0.0.0:14322"
+    http:
+      address: "0.0.0.0:4322"
+    use_otlp_decoding: true
+
+sinks:
+  # Logs: use OTLP protobuf encoding (http sink supports otlp codec for logs)
+  databricks_logs:
+    type: http
+    inputs: ["otlp.logs"]
+    uri: "https://${DATABRICKS_HOST_BARE}/api/2.0/tracing/otel/v1/logs"
+    method: post
+    encoding:
+      codec: otlp
+    request:
+      headers:
+        Authorization: "Bearer ${DATABRICKS_TOKEN}"
+        X-Databricks-UC-Table-Name: "telemetry.otel.vector_otel_logs_v2"
+        X-Databricks-Workspace-Url: "https://${DATABRICKS_HOST_BARE}"
+        Content-Type: "application/x-protobuf"
+

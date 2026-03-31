@@ -1,0 +1,37 @@
+%%{init: {'theme': 'dark', 'themeVariables': {'primaryColor': '#1a2744', 'primaryTextColor': '#eaf0ff', 'primaryBorderColor': '#26365b', 'lineColor': '#5bb8f5', 'secondaryColor': '#0d1730', 'tertiaryColor': '#101b35', 'fontSize': '14px'}}}%%
+graph LR
+    subgraph APP["OTel Simulator App :8000"]
+        SDK["OpenTelemetry<br/>Python SDK"]
+    end
+
+    subgraph COLLECTORS["Sidecar Collectors"]
+        direction TB
+        FB["🟠 Fluent Bit<br/>:4318<br/><i>Logs</i>"]
+        TG["🟣 Telegraf<br/>:4319<br/><i>Metrics</i>"]
+        AL["🔵 Grafana Alloy<br/>:4320<br/><i>Logs + Metrics + Traces</i>"]
+        VE["🔴 Vector<br/>:4322<br/><i>Logs</i>"]
+        OC["🔵 OTel Collector<br/>:4323<br/><i>Logs + Metrics + Traces</i>"]
+    end
+
+    subgraph DATABRICKS["Databricks Unity Catalog"]
+        direction TB
+        LOGS["📋 Logs Tables<br/>fluentbit_otel_logs_v2<br/>vector_otel_logs_v2<br/>alloy_otel_logs_v2<br/>otelcol_otel_logs_v2"]
+        METRICS["📊 Metrics Tables<br/>telegraf_otel_metrics<br/>alloy_otel_metrics<br/>otelcol_otel_metrics"]
+        TRACES["🔍 Spans Tables<br/>alloy_otel_spans_v2<br/>otelcol_otel_spans_v2"]
+    end
+
+    SDK -->|"Logs<br/>OTLP/HTTP"| FB
+    SDK -->|"Logs<br/>OTLP/HTTP"| VE
+    SDK -->|"Metrics<br/>OTLP/gRPC"| TG
+    SDK -->|"All signals<br/>OTLP/HTTP"| AL
+    SDK -->|"All signals<br/>OTLP/HTTP"| OC
+
+    FB -->|"OTLP/HTTP<br/>+ 3 headers"| LOGS
+    VE -->|"OTLP/HTTP<br/>+ 3 headers"| LOGS
+    TG -->|"OTLP/HTTP<br/>+ 3 headers"| METRICS
+    AL -->|"OTLP/HTTP<br/>+ 3 headers"| LOGS
+    AL -->|"OTLP/HTTP<br/>+ 3 headers"| METRICS
+    AL -->|"OTLP/HTTP<br/>+ 3 headers"| TRACES
+    OC -->|"OTLP/HTTP<br/>+ 3 headers"| LOGS
+    OC -->|"OTLP/HTTP<br/>+ 3 headers"| METRICS
+    OC -->|"OTLP/HTTP<br/>+ 3 headers"| TRACES

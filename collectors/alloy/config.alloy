@@ -1,0 +1,67 @@
+// Grafana Alloy — Full OTel collector sidecar
+// Receives all signals on localhost:4320 (HTTP), forwards to Databricks.
+//
+// Environment variables (set by start-sidecars.sh):
+//   DATABRICKS_HOST_BARE  — workspace host without https://
+//   DATABRICKS_TOKEN      — PAT or OAuth token
+
+otelcol.receiver.otlp "default" {
+  http {
+    endpoint = "0.0.0.0:4320"
+  }
+
+  output {
+    traces  = [otelcol.processor.batch.default.input]
+    logs    = [otelcol.processor.batch.default.input]
+    metrics = [otelcol.processor.batch.default.input]
+  }
+}
+
+otelcol.processor.batch "default" {
+  timeout = "2s"
+
+  output {
+    traces  = [otelcol.exporter.otlphttp.traces.input]
+    logs    = [otelcol.exporter.otlphttp.logs.input]
+    metrics = [otelcol.exporter.otlphttp.metrics.input]
+  }
+}
+
+otelcol.exporter.otlphttp "traces" {
+  client {
+    endpoint = "https://" + env("DATABRICKS_HOST_BARE")
+    headers = {
+      "Authorization"               = "Bearer " + env("DATABRICKS_TOKEN"),
+      "X-Databricks-UC-Table-Name"  = "telemetry.otel.alloy_otel_spans_v2",
+      "X-Databricks-Workspace-Url"  = "https://" + env("DATABRICKS_HOST_BARE"),
+    }
+    tls { insecure = false }
+  }
+  traces_endpoint = "https://" + env("DATABRICKS_HOST_BARE") + "/api/2.0/tracing/otel/v1/traces"
+}
+
+otelcol.exporter.otlphttp "logs" {
+  client {
+    endpoint = "https://" + env("DATABRICKS_HOST_BARE")
+    headers = {
+      "Authorization"               = "Bearer " + env("DATABRICKS_TOKEN"),
+      "X-Databricks-UC-Table-Name"  = "telemetry.otel.alloy_otel_logs_v2",
+      "X-Databricks-Workspace-Url"  = "https://" + env("DATABRICKS_HOST_BARE"),
+    }
+    tls { insecure = false }
+  }
+  logs_endpoint = "https://" + env("DATABRICKS_HOST_BARE") + "/api/2.0/tracing/otel/v1/logs"
+}
+
+otelcol.exporter.otlphttp "metrics" {
+  client {
+    endpoint = "https://" + env("DATABRICKS_HOST_BARE")
+    headers = {
+      "Authorization"               = "Bearer " + env("DATABRICKS_TOKEN"),
+      "X-Databricks-UC-Table-Name"  = "telemetry.otel.alloy_otel_metrics",
+      "X-Databricks-Workspace-Url"  = "https://" + env("DATABRICKS_HOST_BARE"),
+    }
+    tls { insecure = false }
+  }
+  metrics_endpoint = "https://" + env("DATABRICKS_HOST_BARE") + "/api/2.0/otel/v1/metrics"
+}

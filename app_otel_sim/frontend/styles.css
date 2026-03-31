@@ -125,6 +125,327 @@ body {
   50% { opacity: 0.5; }
 }
 
+/* ---- Sidecar Collectors Bar ---- */
+
+.sidecar-bar {
+  background: linear-gradient(180deg, #0e1a38 0%, #0b1530 100%);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 18px;
+  margin-bottom: 12px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.sidecar-bar.hidden {
+  display: none;
+}
+
+.sidecar-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.sidecar-title {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--muted);
+}
+
+.sidecar-mode-pill {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.6px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: #1a3a2a;
+  color: var(--normal-color);
+  border: 1px solid #2a5a3a;
+}
+
+.sidecar-cards {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  overflow-x: auto;
+}
+
+.sidecar-card {
+  background: linear-gradient(180deg, #101b35 0%, #0c1630 100%);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: border-color 0.3s;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.sidecar-card-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.sidecar-card.healthy {
+  border-color: #2a5a3a;
+}
+
+.sidecar-card.unhealthy {
+  border-color: #5a2a2a;
+}
+
+.sidecar-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.sidecar-dot.healthy {
+  background: var(--normal-color);
+  box-shadow: 0 0 8px var(--normal-color);
+  animation: sidecar-pulse 2s ease-in-out infinite;
+}
+
+.sidecar-dot.unhealthy {
+  background: var(--critical-color);
+  box-shadow: 0 0 6px var(--critical-color);
+}
+
+@keyframes sidecar-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.sidecar-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.sidecar-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.sidecar-signal {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.sidecar-signal .signal-type {
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.sidecar-signal .signal-type.logs { color: var(--infra); }
+.sidecar-signal .signal-type.metrics { color: var(--network); }
+.sidecar-signal .signal-type.traces { color: var(--app); }
+
+.sidecar-port {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.sidecar-status-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+
+.sidecar-status-label.healthy {
+  color: var(--normal-color);
+  background: rgba(102, 187, 106, 0.12);
+}
+
+.sidecar-status-label.unhealthy {
+  color: var(--critical-color);
+  background: rgba(239, 83, 80, 0.12);
+}
+
+/* ---- Sidecar Info Panel ---- */
+
+.sidecar-info-toggle {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 10px;
+  cursor: pointer;
+  padding: 4px 0 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  opacity: 0.6;
+  transition: opacity 0.2s, color 0.2s;
+}
+
+.sidecar-info-toggle:hover {
+  opacity: 1;
+  color: var(--text);
+}
+
+.sidecar-info-toggle.open {
+  opacity: 1;
+  color: var(--app);
+}
+
+.info-toggle-icon {
+  font-size: 13px;
+}
+
+.sidecar-info-panel {
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 5px;
+  padding: 10px 12px;
+  animation: info-slide 0.2s ease-out;
+}
+
+.sidecar-info-panel.hidden {
+  display: none;
+}
+
+@keyframes info-slide {
+  from { opacity: 0; max-height: 0; }
+  to { opacity: 1; max-height: 200px; }
+}
+
+.sidecar-info-text {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.sidecar-info-meta {
+  margin-top: 8px;
+  font-size: 10px;
+  color: var(--muted);
+  opacity: 0.7;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.sidecar-counter {
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sidecar-count {
+  font-weight: 700;
+  color: var(--text);
+}
+
+/* ---- Sidecar Live Feed ---- */
+
+.sidecar-feed {
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 5px;
+  padding: 6px 8px;
+  max-height: 110px;
+  overflow: hidden;
+  font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.feed-empty {
+  color: var(--muted);
+  font-style: italic;
+  opacity: 0.5;
+  padding: 4px 0;
+}
+
+.feed-row {
+  display: flex;
+  gap: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  padding: 1px 0;
+  opacity: 0.7;
+  min-width: 0;
+}
+
+.feed-row.feed-newest {
+  opacity: 1;
+  animation: feed-flash 0.6s ease-out;
+}
+
+@keyframes feed-flash {
+  0% { background: rgba(255, 255, 255, 0.08); }
+  100% { background: transparent; }
+}
+
+.feed-time {
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.feed-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.feed-row.normal .feed-text { color: var(--normal-color); }
+.feed-row.warn .feed-text { color: var(--warning-color); }
+.feed-row.critical .feed-text { color: var(--critical-color); }
+
+/* ---- Signal Badges (Event Stream) ---- */
+
+.ev-signals {
+  display: flex;
+  gap: 3px;
+  flex-shrink: 0;
+}
+
+.ev-signal {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+}
+
+.ev-signal.traces {
+  background: rgba(53, 214, 255, 0.15);
+  color: var(--app);
+  border: 1px solid rgba(53, 214, 255, 0.3);
+}
+
+.ev-signal.logs {
+  background: rgba(255, 181, 102, 0.15);
+  color: var(--infra);
+  border: 1px solid rgba(255, 181, 102, 0.3);
+}
+
+.ev-signal.metrics {
+  background: rgba(190, 133, 255, 0.15);
+  color: var(--network);
+  border: 1px solid rgba(190, 133, 255, 0.3);
+}
+
 /* ---- Controls Bar ---- */
 
 .controls-bar {
@@ -1153,7 +1474,7 @@ pre {
 /* ---- Data Flow Modal ---- */
 
 .dataflow-card {
-  width: min(1060px, 95vw);
+  width: min(1300px, 95vw);
 }
 
 .dataflow-top {
@@ -1212,6 +1533,7 @@ pre {
 }
 
 .df-stage-blue { border-color: rgba(74, 144, 226, 0.4); }
+.df-stage-purple { border-color: rgba(190, 133, 255, 0.4); }
 .df-stage-orange { border-color: rgba(245, 158, 66, 0.4); }
 .df-stage-green { border-color: rgba(52, 211, 153, 0.4); }
 
@@ -1231,6 +1553,10 @@ pre {
   align-items: center;
   justify-content: center;
   box-shadow: 0 2px 8px rgba(74, 144, 226, 0.4);
+}
+.df-stage-number.purple {
+  background: #be85ff;
+  box-shadow: 0 2px 8px rgba(190, 133, 255, 0.4);
 }
 .df-stage-number.orange {
   background: #f59e42;
@@ -1271,6 +1597,7 @@ pre {
   flex-shrink: 0;
 }
 .df-vp-dot.blue { background: #4a90e2; }
+.df-vp-dot.purple { background: #be85ff; }
 .df-vp-dot.orange { background: #f59e42; }
 .df-vp-dot.green { background: #34d399; }
 

@@ -1,0 +1,35 @@
+# Fluent Bit — Log collector sidecar
+# Receives OTLP logs on localhost:4318, forwards to Databricks OTLP endpoint.
+#
+# Environment variables (set by start-sidecars.sh):
+#   DATABRICKS_HOST_BARE  — workspace host without https://
+#   DATABRICKS_TOKEN      — PAT or OAuth token
+
+service:
+  flush: 2
+  log_level: info
+  http_server: on
+  http_listen: 0.0.0.0
+  http_port: 2020
+
+pipeline:
+  inputs:
+    - name: opentelemetry
+      listen: 0.0.0.0
+      port: 4318
+      tag: otel.logs
+
+  outputs:
+    - name: opentelemetry
+      match: "*"
+      host: ${DATABRICKS_HOST_BARE}
+      port: 443
+      logs_uri: /api/2.0/tracing/otel/v1/logs
+      traces_uri: /api/2.0/tracing/otel/v1/traces
+      metrics_uri: /api/2.0/otel/v1/metrics
+      tls: on
+      tls.verify: on
+      header:
+        - Authorization Bearer ${DATABRICKS_TOKEN}
+        - X-Databricks-UC-Table-Name telemetry.otel.fluentbit_otel_logs_v2
+        - X-Databricks-Workspace-Url https://${DATABRICKS_HOST_BARE}

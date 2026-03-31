@@ -35,6 +35,9 @@ dist/
 # Jupyter
 .ipynb_checkpoints/
 
+# Collector binaries (downloaded locally)
+collectors/bin/
+
 # Logs and temp files
 *.log
 *.tmp

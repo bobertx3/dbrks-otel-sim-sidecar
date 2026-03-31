@@ -44,6 +44,15 @@
         </div>
       </div>
 
+      <!-- Sidecar Collectors status bar -->
+      <div class="sidecar-bar hidden" id="sidecar-bar">
+        <div class="sidecar-header">
+          <span class="sidecar-title">Sidecar Collectors</span>
+          <span class="sidecar-mode-pill" id="sidecar-mode-pill">SIDECAR MODE</span>
+        </div>
+        <div class="sidecar-cards" id="sidecar-cards"></div>
+      </div>
+
       <!-- Mode & controls bar -->
       <div class="controls-bar">
         <div class="controls-left">
@@ -102,46 +111,45 @@
         <div class="dataflow-top">
           <div>
             <h2 class="dataflow-title">Telemetry Data Flow</h2>
-            <p class="dataflow-subtitle">How telemetry flows from domains through OTel endpoints to Delta Lake</p>
+            <p class="dataflow-subtitle">How telemetry flows from the OTel SDK through sidecar collectors to Databricks Unity Catalog</p>
           </div>
           <button type="button" class="df-expand-btn" id="btn-expand-all">Expand</button>
         </div>
 
         <div class="dataflow-pipeline">
-          <!-- Box 1: Telemetry Sources -->
+          <!-- Box 1: OTel Simulator App -->
           <div class="df-stage df-stage-blue" id="df-stage-domains" data-stage="domains">
             <div class="df-stage-number">1</div>
             <div class="df-stage-header">
               <span class="df-stage-icon">&#128225;</span>
-              <span class="df-stage-label">Telemetry Sources</span>
+              <span class="df-stage-label">OTel Simulator App</span>
             </div>
-            <div class="df-stage-subtitle">Applications &amp; Infrastructure</div>
+            <div class="df-stage-subtitle">OpenTelemetry Python SDK</div>
             <ul class="df-value-points">
-              <li><span class="df-vp-dot blue"></span>OpenTelemetry SDK</li>
-              <li><span class="df-vp-dot blue"></span>Fluent Bit Agents</li>
-              <li><span class="df-vp-dot blue"></span>StatsD / Prometheus</li>
-              <li><span class="df-vp-dot blue"></span>Custom Instrumentation</li>
+              <li><span class="df-vp-dot blue"></span>OTLP/HTTP Exporters</li>
+              <li><span class="df-vp-dot blue"></span>Traces, Logs &amp; Metrics</li>
+              <li><span class="df-vp-dot blue"></span>Sidecar Mode Routing</li>
             </ul>
             <div class="df-stage-expand" id="df-expand-domains">
+              <div class="df-sub-item app-accent">
+                <span class="df-sub-dot" style="background:var(--app)"></span>
+                <div>
+                  <div class="df-sub-label">Traces</div>
+                  <div class="df-sub-detail">OTLPSpanExporter → localhost:4320</div>
+                </div>
+              </div>
               <div class="df-sub-item infra-accent">
                 <span class="df-sub-dot" style="background:var(--infra)"></span>
                 <div>
-                  <div class="df-sub-label">Infrastructure</div>
-                  <div class="df-sub-detail">Pod lifecycle, node pressure, autoscaler, rollouts</div>
+                  <div class="df-sub-label">Logs</div>
+                  <div class="df-sub-detail">OTLPLogExporter → localhost:4318</div>
                 </div>
               </div>
               <div class="df-sub-item network-accent">
                 <span class="df-sub-dot" style="background:var(--network)"></span>
                 <div>
-                  <div class="df-sub-label">Networking</div>
-                  <div class="df-sub-detail">Flow logs, latency spikes, packet loss, DNS failures</div>
-                </div>
-              </div>
-              <div class="df-sub-item app-accent">
-                <span class="df-sub-dot" style="background:var(--app)"></span>
-                <div>
-                  <div class="df-sub-label">Applications</div>
-                  <div class="df-sub-detail">API traces, errors, timeouts, batch jobs, CDC sync</div>
+                  <div class="df-sub-label">Metrics</div>
+                  <div class="df-sub-detail">OTLPMetricExporter (gRPC) → localhost:4319</div>
                 </div>
               </div>
             </div>
@@ -155,48 +163,62 @@
               <div class="df-particle p2"></div>
               <div class="df-particle p3"></div>
             </div>
-            <div class="df-pipe-label">OTLP/HTTP</div>
+            <div class="df-pipe-label">OTLP localhost</div>
           </div>
 
-          <!-- Box 2: Zerobus Ingest -->
-          <div class="df-stage df-stage-orange" id="df-stage-endpoints" data-stage="endpoints">
-            <div class="df-stage-number orange">2</div>
+          <!-- Box 2: Sidecar Collectors -->
+          <div class="df-stage df-stage-purple" id="df-stage-sidecars" data-stage="sidecars">
+            <div class="df-stage-number purple">2</div>
             <div class="df-stage-header">
-              <span class="df-stage-icon">&#9889;</span>
-              <span class="df-stage-label">Zerobus Ingest</span>
+              <span class="df-stage-icon">&#9881;</span>
+              <span class="df-stage-label">Sidecar Collectors</span>
             </div>
-            <div class="df-stage-subtitle">High-throughput ingestion</div>
+            <div class="df-stage-subtitle">5 collectors — each handles its native signals</div>
             <ul class="df-value-points">
-              <li><span class="df-vp-dot orange"></span>Schema validation</li>
-              <li><span class="df-vp-dot orange"></span>Routing &amp; enrichment</li>
-              <li><span class="df-vp-dot orange"></span>Back-pressure handling</li>
-              <li><span class="df-vp-dot orange"></span>Multi-tenant isolation</li>
+              <li><span class="df-vp-dot purple"></span>Same 3 headers, any collector</li>
+              <li><span class="df-vp-dot purple"></span>Add Databricks auth headers</li>
+              <li><span class="df-vp-dot purple"></span>Forward over TLS</li>
             </ul>
-            <div class="df-stage-expand" id="df-expand-endpoints">
-              <div class="df-sub-item">
-                <span class="df-sub-dot" style="background:#f59e42"></span>
+            <div class="df-stage-expand" id="df-expand-sidecars">
+              <div class="df-sub-item infra-accent">
+                <span class="df-sub-dot" style="background:var(--infra)"></span>
                 <div>
-                  <div class="df-sub-label">Traces</div>
-                  <div class="df-sub-url">/api/2.0/tracing/otel/v1/traces</div>
+                  <div class="df-sub-label">Fluent Bit <span style="color:var(--muted);font-weight:400">:4318</span></div>
+                  <div class="df-sub-detail">Logs</div>
+                </div>
+              </div>
+              <div class="df-sub-item network-accent">
+                <span class="df-sub-dot" style="background:var(--network)"></span>
+                <div>
+                  <div class="df-sub-label">Telegraf <span style="color:var(--muted);font-weight:400">:4319</span></div>
+                  <div class="df-sub-detail">Metrics</div>
+                </div>
+              </div>
+              <div class="df-sub-item app-accent">
+                <span class="df-sub-dot" style="background:var(--app)"></span>
+                <div>
+                  <div class="df-sub-label">Grafana Alloy <span style="color:var(--muted);font-weight:400">:4320</span></div>
+                  <div class="df-sub-detail">Logs + Metrics + Traces</div>
                 </div>
               </div>
               <div class="df-sub-item">
-                <span class="df-sub-dot" style="background:#f59e42"></span>
+                <span class="df-sub-dot" style="background:#e0697e"></span>
                 <div>
-                  <div class="df-sub-label">Logs</div>
-                  <div class="df-sub-url">/api/2.0/tracing/otel/v1/logs</div>
+                  <div class="df-sub-label">Vector <span style="color:var(--muted);font-weight:400">:4322</span></div>
+                  <div class="df-sub-detail">Logs</div>
                 </div>
               </div>
               <div class="df-sub-item">
-                <span class="df-sub-dot" style="background:#f59e42"></span>
+                <span class="df-sub-dot" style="background:#5bb8f5"></span>
                 <div>
-                  <div class="df-sub-label">Metrics</div>
-                  <div class="df-sub-url">/api/2.0/otel/v1/metrics</div>
+                  <div class="df-sub-label">OTel Collector <span style="color:var(--muted);font-weight:400">:4323</span></div>
+                  <div class="df-sub-detail">Logs + Metrics + Traces</div>
                 </div>
               </div>
               <div class="df-sub-footer">
                 <code>Authorization: Bearer &lt;token&gt;</code>
                 <code>X-Databricks-UC-Table-Name: &lt;table&gt;</code>
+                <code>X-Databricks-Workspace-Url: &lt;host&gt;</code>
               </div>
             </div>
           </div>
@@ -209,12 +231,61 @@
               <div class="df-particle p2"></div>
               <div class="df-particle p3"></div>
             </div>
+            <div class="df-pipe-label">OTLP/HTTP (TLS)</div>
+          </div>
+
+          <!-- Box 3: Zerobus Ingest -->
+          <div class="df-stage df-stage-orange" id="df-stage-endpoints" data-stage="endpoints">
+            <div class="df-stage-number orange">3</div>
+            <div class="df-stage-header">
+              <span class="df-stage-icon">&#9889;</span>
+              <span class="df-stage-label">Zerobus Ingest</span>
+            </div>
+            <div class="df-stage-subtitle">High-throughput ingestion</div>
+            <ul class="df-value-points">
+              <li><span class="df-vp-dot orange"></span>Schema validation</li>
+              <li><span class="df-vp-dot orange"></span>UC table routing</li>
+              <li><span class="df-vp-dot orange"></span>Back-pressure handling</li>
+            </ul>
+            <div class="df-stage-expand" id="df-expand-endpoints">
+              <div class="df-sub-item">
+                <span class="df-sub-dot" style="background:var(--app)"></span>
+                <div>
+                  <div class="df-sub-label">Traces Endpoint</div>
+                  <div class="df-sub-url">/api/2.0/tracing/otel/v1/traces</div>
+                </div>
+              </div>
+              <div class="df-sub-item">
+                <span class="df-sub-dot" style="background:var(--infra)"></span>
+                <div>
+                  <div class="df-sub-label">Logs Endpoint</div>
+                  <div class="df-sub-url">/api/2.0/tracing/otel/v1/logs</div>
+                </div>
+              </div>
+              <div class="df-sub-item">
+                <span class="df-sub-dot" style="background:var(--network)"></span>
+                <div>
+                  <div class="df-sub-label">Metrics Endpoint</div>
+                  <div class="df-sub-url">/api/2.0/otel/v1/metrics</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Arrow 3 -->
+          <div class="df-pipe">
+            <div class="df-pipe-track">
+              <div class="df-pipe-line"></div>
+              <div class="df-particle p1"></div>
+              <div class="df-particle p2"></div>
+              <div class="df-particle p3"></div>
+            </div>
             <div class="df-pipe-label">UC Routing</div>
           </div>
 
-          <!-- Box 3: Unity Catalog -->
+          <!-- Box 4: Unity Catalog -->
           <div class="df-stage df-stage-green" id="df-stage-delta" data-stage="delta">
-            <div class="df-stage-number green">3</div>
+            <div class="df-stage-number green">4</div>
             <div class="df-stage-header">
               <span class="df-stage-icon">&#9651;</span>
               <span class="df-stage-label">Unity Catalog</span>
@@ -224,25 +295,24 @@
               <li><span class="df-vp-dot green"></span>ACID transactions</li>
               <li><span class="df-vp-dot green"></span>Fine-grained access control</li>
               <li><span class="df-vp-dot green"></span>Schema evolution</li>
-              <li><span class="df-vp-dot green"></span>Cross-workspace sharing</li>
             </ul>
             <div class="df-stage-expand" id="df-expand-delta">
               <div class="df-sub-item">
-                <span class="df-sub-dot" style="background:var(--normal-color)"></span>
+                <span class="df-sub-dot" style="background:var(--app)"></span>
                 <div>
                   <div class="df-sub-label">Spans Table</div>
                   <div class="df-sub-url" id="df-spans-table"></div>
                 </div>
               </div>
               <div class="df-sub-item">
-                <span class="df-sub-dot" style="background:var(--normal-color)"></span>
+                <span class="df-sub-dot" style="background:var(--infra)"></span>
                 <div>
                   <div class="df-sub-label">Logs Table</div>
                   <div class="df-sub-url" id="df-logs-table"></div>
                 </div>
               </div>
               <div class="df-sub-item">
-                <span class="df-sub-dot" style="background:var(--normal-color)"></span>
+                <span class="df-sub-dot" style="background:var(--network)"></span>
                 <div>
                   <div class="df-sub-label">Metrics Table</div>
                   <div class="df-sub-url" id="df-metrics-table"></div>
