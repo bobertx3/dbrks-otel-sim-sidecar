@@ -29,6 +29,12 @@ fi
 
 info "Python: $(python3 --version)"
 
+if ! command -v databricks &>/dev/null; then
+    error "Databricks CLI not found. Install it with: brew tap databricks/tap && brew install databricks"
+    exit 1
+fi
+info "Databricks CLI: $(databricks --version)"
+
 if [[ -d ".venv" ]]; then
     info "Virtual environment already exists (.venv)"
 else
@@ -69,23 +75,28 @@ echo ""
 echo -e "  Your ${CYAN}.env${NC} file must have these values set:"
 echo ""
 echo -e "    ${CYAN}DATABRICKS_HOST${NC}              — Workspace URL (e.g. https://my-workspace.cloud.databricks.com)"
-echo -e "    ${CYAN}DATABRICKS_TOKEN${NC}             — Personal Access Token"
+echo -e "    ${CYAN}DATABRICKS_WORKSPACE_ID${NC}      — Numeric workspace ID"
+echo -e "    ${CYAN}DATABRICKS_CONFIG_PROFILE${NC}    — CLI profile the apps use for SQL queries"
+echo -e "    ${CYAN}DATABRICKS_WAREHOUSE_ID${NC}      — SQL Warehouse ID for queries"
+echo -e "    ${CYAN}DATABRICKS_CLIENT_ID${NC}         — Service principal application ID"
+echo -e "    ${CYAN}DATABRICKS_CLIENT_SECRET${NC}     — Service principal OAuth secret"
+echo -e "    ${CYAN}ZEROBUS_HOST${NC}                 — <workspace-id>.zerobus.<region>.cloud.databricks.com"
 echo -e "    ${CYAN}OTEL_DIRECT_SPANS_TABLE${NC}      — Direct spans table (e.g. bldemos.otel.direct_otel_spans)"
 echo -e "    ${CYAN}OTEL_DIRECT_LOGS_TABLE${NC}       — Direct logs table"
 echo -e "    ${CYAN}OTEL_DIRECT_METRICS_TABLE${NC}    — Direct metrics table"
-echo -e "    ${CYAN}DATABRICKS_WAREHOUSE_ID${NC}      — SQL Warehouse ID for queries"
 echo ""
 
 # Validate key values are non-empty
 set -a; source .env; set +a
 
 MISSING=()
-[[ -z "${DATABRICKS_HOST:-}" ]] && MISSING+=("DATABRICKS_HOST")
-[[ -z "${DATABRICKS_TOKEN:-}" ]] && MISSING+=("DATABRICKS_TOKEN")
-[[ -z "${OTEL_DIRECT_SPANS_TABLE:-}" ]] && MISSING+=("OTEL_DIRECT_SPANS_TABLE")
-[[ -z "${OTEL_DIRECT_LOGS_TABLE:-}" ]] && MISSING+=("OTEL_DIRECT_LOGS_TABLE")
-[[ -z "${OTEL_DIRECT_METRICS_TABLE:-}" ]] && MISSING+=("OTEL_DIRECT_METRICS_TABLE")
-[[ -z "${DATABRICKS_WAREHOUSE_ID:-}" ]] && MISSING+=("DATABRICKS_WAREHOUSE_ID")
+for var in DATABRICKS_HOST DATABRICKS_WORKSPACE_ID DATABRICKS_CONFIG_PROFILE DATABRICKS_WAREHOUSE_ID \
+           DATABRICKS_CLIENT_ID DATABRICKS_CLIENT_SECRET ZEROBUS_HOST \
+           OTEL_DIRECT_SPANS_TABLE OTEL_DIRECT_LOGS_TABLE OTEL_DIRECT_METRICS_TABLE; do
+    val="${!var:-}"
+    # Empty, or still the "<...>" placeholder from .env.example
+    [[ -z "$val" || "$val" == *"<"* ]] && MISSING+=("$var")
+done
 
 if [[ ${#MISSING[@]} -gt 0 ]]; then
     error "Missing values in .env: ${MISSING[*]}"
@@ -96,19 +107,14 @@ fi
 
 info "All required .env values are set."
 
-# Quick connectivity check
+# Quick connectivity check (the apps run SQL through this CLI profile)
 echo ""
-info "Testing Databricks connectivity..."
-HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
-    -H "Authorization: Bearer ${DATABRICKS_TOKEN}" \
-    "${DATABRICKS_HOST}/api/2.0/preview/scim/v2/Me" 2>/dev/null || echo "000")
-
-if [[ "$HTTP_CODE" == "200" ]]; then
-    info "Connected to ${DATABRICKS_HOST}"
-elif [[ "$HTTP_CODE" == "000" ]]; then
-    warn "Could not reach ${DATABRICKS_HOST} — check your network"
+info "Testing Databricks CLI profile '${DATABRICKS_CONFIG_PROFILE}'..."
+if ME=$(databricks current-user me -p "$DATABRICKS_CONFIG_PROFILE" -o json 2>/dev/null); then
+    info "Connected to ${DATABRICKS_HOST} as $(echo "$ME" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("userName",""))')"
 else
-    warn "Databricks returned HTTP $HTTP_CODE — check your token"
+    warn "CLI profile '${DATABRICKS_CONFIG_PROFILE}' is not logged in. Run:"
+    warn "  databricks auth login --host ${DATABRICKS_HOST} --profile ${DATABRICKS_CONFIG_PROFILE}"
 fi
 
 # ─── Step 4: Confirmation ─────────────────────────────────
@@ -118,9 +124,10 @@ step "Step 4/4: Ready to run"
 echo ""
 info "Setup complete. To start everything:"
 echo ""
+echo -e "    ${CYAN}source .venv/bin/activate${NC}"
 echo -e "    ${CYAN}./start-all.sh${NC}"
 echo ""
-echo -e "  This launches 5 sidecar collectors + both apps:"
+echo -e "  This launches 4 sidecar collectors + both apps:"
 echo -e "    OTel Simulator   → ${CYAN}http://localhost:8000${NC}"
 echo -e "    LakeEO Dashboard → ${CYAN}http://localhost:8001${NC}"
 echo ""
