@@ -1,9 +1,9 @@
 # Fluent Bit — Log collector sidecar
-# Receives OTLP logs on localhost:4318, forwards to Databricks OTLP endpoint.
+# Receives OTLP logs on localhost:4318, forwards to the Databricks Zerobus OTLP endpoint.
 #
-# Environment variables (set by start-sidecars.sh):
-#   DATABRICKS_HOST_BARE  — workspace host without https://
-#   DATABRICKS_TOKEN      — PAT or OAuth token
+# Environment variables (set by start-all.sh):
+#   DATABRICKS_TOKEN  — Zerobus token scoped to bldemos.otel.fluentbit_otel_logs
+#                       (refreshed by start-fluent-bit.sh)
 
 service:
   flush: 2
@@ -22,14 +22,25 @@ pipeline:
   outputs:
     - name: opentelemetry
       match: "*"
-      host: ${DATABRICKS_HOST_BARE}
+
+      # Previous: workspace REST endpoint (no longer in the docs)
+      # host: fevm-bobertx3-aws-fevm.cloud.databricks.com
+      # logs_uri: /api/2.0/tracing/otel/v1/logs
+
+      # Current: Zerobus Ingest OTLP endpoint
+      host: 7474645374628060.zerobus.us-east-1.cloud.databricks.com
+      logs_uri: /v1/logs
+
       port: 443
-      logs_uri: /api/2.0/tracing/otel/v1/logs
-      traces_uri: /api/2.0/tracing/otel/v1/traces
-      metrics_uri: /api/2.0/otel/v1/metrics
       tls: on
       tls.verify: on
+      compress: gzip
       header:
         - Authorization Bearer ${DATABRICKS_TOKEN}
-        - X-Databricks-UC-Table-Name telemetry.otel.fluentbit_otel_logs_v2
-        - X-Databricks-Workspace-Url https://${DATABRICKS_HOST_BARE}
+        - x-databricks-zerobus-table-name bldemos.otel.fluentbit_otel_logs
+        # Previous headers (workspace REST endpoint)
+        # - X-Databricks-UC-Table-Name bldemos.otel.fluentbit_otel_logs
+        # - X-Databricks-Workspace-Url https://fevm-bobertx3-aws-fevm.cloud.databricks.com
+
+        # Current header (Zerobus)
+

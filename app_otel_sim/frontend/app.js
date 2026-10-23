@@ -446,7 +446,7 @@ function openRefreshModal() {
       refreshCounts.style.display = "";
       refreshTableBody.innerHTML = "";
       let total = 0;
-      // New format: data.tables is { "telemetry.otel.xyz": count, ... }
+      // New format: data.tables is { "bldemos.otel.xyz": count, ... }
       const tableData = data.tables || {};
       for (const [name, count] of Object.entries(tableData)) {
         total += count;

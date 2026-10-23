@@ -186,7 +186,6 @@ def _emit_for_event(domain: Domain, event_key: str, event_label: str) -> tuple[d
         latency_ms=latency_ms,
         error=error_event,
     )
-    emitter.flush()
 
     telemetry_summary = {
         "trace": event_label,
@@ -497,21 +496,19 @@ def _all_sidecar_tables() -> list[str]:
     tables = []
     for c in SIDECAR_COLLECTORS:
         for signal in c["signals"]:
-            prefix = c["name"].lower().replace(" ", "").replace("otelcollector", "otelcol")
+            prefix = c["name"].lower().replace(" ", "")
             if c["name"] == "Fluent Bit":
                 prefix = "fluentbit"
             elif c["name"] == "Grafana Alloy":
                 prefix = "alloy"
             elif c["name"] == "Vector":
                 prefix = "vector"
-            elif c["name"] == "OTel Collector":
-                prefix = "otelcol"
             if signal == "logs":
-                tables.append(f"telemetry.otel.{prefix}_otel_logs_v2")
+                tables.append(f"bldemos.otel.{prefix}_otel_logs")
             elif signal == "metrics":
-                tables.append(f"telemetry.otel.{prefix}_otel_metrics")
+                tables.append(f"bldemos.otel.{prefix}_otel_metrics")
             elif signal == "traces":
-                tables.append(f"telemetry.otel.{prefix}_otel_spans_v2")
+                tables.append(f"bldemos.otel.{prefix}_otel_spans")
     return tables
 
 
@@ -898,8 +895,6 @@ def emit_random(
                     correlation_id=correlation_id,
                 ))
 
-    emitter.flush()
-
     return EmitRandomResponse(
         scenario_id=scenario.id,
         scenario_label=scenario.label,
@@ -957,9 +952,6 @@ def emit_batch(count: int = 0) -> dict[str, Any]:
         )
         result = _emit_single_scenario(scenario)
         results.append(result)
-
-    # Single flush for the whole batch
-    emitter.flush()
 
     return {
         "status": "ok",

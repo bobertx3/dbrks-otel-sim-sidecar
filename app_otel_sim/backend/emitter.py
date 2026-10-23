@@ -4,6 +4,8 @@ import logging
 import os
 from dataclasses import dataclass
 
+import requests
+
 from opentelemetry import _logs as otel_logs
 from opentelemetry import metrics, trace
 from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
@@ -11,12 +13,30 @@ from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExp
 from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
-from opentelemetry.sdk._logs.export import SimpleLogRecordProcessor
+from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+
+# Export spans/logs from a background thread so emits don't block on network I/O
+# (each direct-mode export is an HTTPS round trip to Databricks).
+EXPORT_DELAY_MS = 500
+
+
+class _ZerobusTokenAuth(requests.auth.AuthBase):
+    """Bearer auth that re-reads a table-scoped Zerobus token file on every request,
+    so exports pick up tokens rotated by scripts/oauth_token_refresh.py."""
+
+    def __init__(self, token_file: str) -> None:
+        self.token_file = token_file
+
+    def __call__(self, r: requests.PreparedRequest) -> requests.PreparedRequest:
+        with open(self.token_file) as f:
+            r.headers["Authorization"] = f"Bearer {f.read().strip()}"
+        return r
 
 
 # Sidecar collector definitions: which signals each collector handles
@@ -84,23 +104,6 @@ SIDECAR_COLLECTORS = [
         "config_format": "YAML/TOML",
         "config_lines": "~10",
     },
-    {
-        "name": "OTel Collector",
-        "signals": ["logs", "metrics", "traces"],
-        "port": 4323,
-        "protocol": "http",
-        "description": "The reference OTel Collector implementation",
-        "info": (
-            "The OpenTelemetry Collector is the official, vendor-neutral reference "
-            "implementation from the CNCF OpenTelemetry project. It handles all three "
-            "signal types natively and is the most widely deployed OTel collector. "
-            "Extensible via receivers, processors, and exporters. The 'contrib' distribution "
-            "includes 200+ community-maintained components. The standard choice for "
-            "greenfield OTel deployments."
-        ),
-        "config_format": "YAML",
-        "config_lines": "~8",
-    },
 ]
 
 
@@ -112,6 +115,8 @@ class EmitterConfig:
     direct_spans_table: str
     direct_logs_table: str
     direct_metrics_table: str
+    zerobus_host: str = ""
+    zerobus_token_dir: str = ""
 
     @classmethod
     def from_env(cls) -> "EmitterConfig":
@@ -152,6 +157,8 @@ class EmitterConfig:
             direct_spans_table=required["OTEL_DIRECT_SPANS_TABLE"],
             direct_logs_table=required["OTEL_DIRECT_LOGS_TABLE"],
             direct_metrics_table=required["OTEL_DIRECT_METRICS_TABLE"],
+            zerobus_host=os.getenv("ZEROBUS_HOST", ""),
+            zerobus_token_dir=os.getenv("ZEROBUS_TOKEN_DIR", "/tmp/.databricks_zerobus_tokens"),
         )
 
 
@@ -179,36 +186,40 @@ class OTelEmitter:
 
         # --- Traces ---
         self.tracer_provider = TracerProvider(resource=resource)
-        self.traces_endpoint = f"{cfg.databricks_host}/api/2.0/tracing/otel/v1/traces"
+        self.traces_endpoint = f"https://{cfg.zerobus_host}/v1/traces"
         if self.sidecar_mode:
             for c in SIDECAR_COLLECTORS:
                 if "traces" in c["signals"]:
                     exp = OTLPSpanExporter(
                         endpoint=f"http://localhost:{c['port']}/v1/traces", headers={}
                     )
-                    self.tracer_provider.add_span_processor(SimpleSpanProcessor(exp))
+                    self.tracer_provider.add_span_processor(BatchSpanProcessor(exp, schedule_delay_millis=EXPORT_DELAY_MS))
         else:
             exp = OTLPSpanExporter(
-                endpoint=self.traces_endpoint, headers=self._headers(self._active_spans_table)
+                endpoint=self.traces_endpoint,
+                headers=self._headers(self._active_spans_table),
+                session=self._session(self._active_spans_table),
             )
-            self.tracer_provider.add_span_processor(SimpleSpanProcessor(exp))
+            self.tracer_provider.add_span_processor(BatchSpanProcessor(exp, schedule_delay_millis=EXPORT_DELAY_MS))
         self.tracer = self.tracer_provider.get_tracer(cfg.service_name)
 
         # --- Logs ---
         self.logger_provider = LoggerProvider(resource=resource)
-        self.logs_endpoint = f"{cfg.databricks_host}/api/2.0/tracing/otel/v1/logs"
+        self.logs_endpoint = f"https://{cfg.zerobus_host}/v1/logs"
         if self.sidecar_mode:
             for c in SIDECAR_COLLECTORS:
                 if "logs" in c["signals"]:
                     exp = OTLPLogExporter(
                         endpoint=f"http://localhost:{c['port']}/v1/logs", headers={}
                     )
-                    self.logger_provider.add_log_record_processor(SimpleLogRecordProcessor(exp))
+                    self.logger_provider.add_log_record_processor(BatchLogRecordProcessor(exp, schedule_delay_millis=EXPORT_DELAY_MS))
         else:
             exp = OTLPLogExporter(
-                endpoint=self.logs_endpoint, headers=self._headers(self._active_logs_table)
+                endpoint=self.logs_endpoint,
+                headers=self._headers(self._active_logs_table),
+                session=self._session(self._active_logs_table),
             )
-            self.logger_provider.add_log_record_processor(SimpleLogRecordProcessor(exp))
+            self.logger_provider.add_log_record_processor(BatchLogRecordProcessor(exp, schedule_delay_millis=EXPORT_DELAY_MS))
 
         self.otel_handler = LoggingHandler(
             level=logging.INFO, logger_provider=self.logger_provider
@@ -220,7 +231,7 @@ class OTelEmitter:
 
         # --- Metrics ---
         self.metric_readers: list[PeriodicExportingMetricReader] = []
-        self.metrics_endpoint = f"{cfg.databricks_host}/api/2.0/otel/v1/metrics"
+        self.metrics_endpoint = f"https://{cfg.zerobus_host}/v1/metrics"
         if self.sidecar_mode:
             for c in SIDECAR_COLLECTORS:
                 if "metrics" in c["signals"]:
@@ -236,7 +247,9 @@ class OTelEmitter:
                     self.metric_readers.append(reader)
         else:
             exp = OTLPMetricExporter(
-                endpoint=self.metrics_endpoint, headers=self._headers(self._active_metrics_table)
+                endpoint=self.metrics_endpoint,
+                headers=self._headers(self._active_metrics_table),
+                session=self._session(self._active_metrics_table),
             )
             reader = PeriodicExportingMetricReader(exp, export_interval_millis=5_000)
             self.metric_readers.append(reader)
@@ -274,11 +287,15 @@ class OTelEmitter:
         )
 
     def _headers(self, table_name: str) -> dict[str, str]:
-        return {
-            "Authorization": f"Bearer {self.cfg.databricks_token}",
-            "X-Databricks-UC-Table-Name": table_name,
-            "X-Databricks-Workspace-Url": self.cfg.databricks_host,
-        }
+        return {"x-databricks-zerobus-table-name": table_name}
+
+    def _session(self, table_name: str) -> requests.Session:
+        """Session authenticated with the Zerobus token scoped to *table_name*."""
+        session = requests.Session()
+        session.auth = _ZerobusTokenAuth(
+            os.path.join(self.cfg.zerobus_token_dir, f"{table_name}.token")
+        )
+        return session
 
     # Realistic child span templates per domain
     _CHILD_SPANS = {
