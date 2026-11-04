@@ -22,15 +22,8 @@ pipeline:
   outputs:
     - name: opentelemetry
       match: "*"
-
-      # Previous: workspace REST endpoint (no longer in the docs)
-      # host: fevm-bobertx3-aws-fevm.cloud.databricks.com
-      # logs_uri: /api/2.0/tracing/otel/v1/logs
-
-      # Current: Zerobus Ingest OTLP endpoint
       host: 7474645374628060.zerobus.us-east-1.cloud.databricks.com
       logs_uri: /v1/logs
-
       port: 443
       tls: on
       tls.verify: on
@@ -38,6 +31,12 @@ pipeline:
       header:
         - Authorization Bearer ${DATABRICKS_TOKEN}
         - x-databricks-zerobus-table-name bldemos.otel.fluentbit_otel_logs
+      # Previous: workspace REST endpoint (no longer in the docs)
+      # host: fevm-bobertx3-aws-fevm.cloud.databricks.com
+      # logs_uri: /api/2.0/tracing/otel/v1/logs
+
+      # Current: Zerobus Ingest OTLP endpoint
+
         # Previous headers (workspace REST endpoint)
         # - X-Databricks-UC-Table-Name bldemos.otel.fluentbit_otel_logs
         # - X-Databricks-Workspace-Url https://fevm-bobertx3-aws-fevm.cloud.databricks.com
