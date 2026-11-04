@@ -19,48 +19,39 @@ RANGE_MAP = {
     "all": 525600,
 }
 
-# Collector → table definitions (telemetry.otel schema)
+# Collector → table definitions (bldemos.otel schema)
 COLLECTORS = {
     "fluentbit": {
         "label": "Fluent Bit",
         "signals": ["logs"],
-        "tables": {"logs": "telemetry.otel.fluentbit_otel_logs_v2"},
+        "tables": {"logs": "bldemos.otel.fluentbit_otel_logs"},
     },
     "alloy": {
         "label": "Grafana Alloy",
         "signals": ["logs", "metrics", "traces"],
         "tables": {
-            "logs": "telemetry.otel.alloy_otel_logs_v2",
-            "metrics": "telemetry.otel.alloy_otel_metrics",
-            "traces": "telemetry.otel.alloy_otel_spans_v2",
+            "logs": "bldemos.otel.alloy_otel_logs",
+            "metrics": "bldemos.otel.alloy_otel_metrics",
+            "traces": "bldemos.otel.alloy_otel_spans",
         },
     },
     "telegraf": {
         "label": "Telegraf",
         "signals": ["metrics"],
-        "tables": {"metrics": "telemetry.otel.telegraf_otel_metrics"},
+        "tables": {"metrics": "bldemos.otel.telegraf_otel_metrics"},
     },
     "vector": {
         "label": "Vector",
         "signals": ["logs"],
-        "tables": {"logs": "telemetry.otel.vector_otel_logs_v2"},
-    },
-    "otelcol": {
-        "label": "OTel Collector",
-        "signals": ["logs", "metrics", "traces"],
-        "tables": {
-            "logs": "telemetry.otel.otelcol_otel_logs_v2",
-            "metrics": "telemetry.otel.otelcol_otel_metrics",
-            "traces": "telemetry.otel.otelcol_otel_spans_v2",
-        },
+        "tables": {"logs": "bldemos.otel.vector_otel_logs"},
     },
     "direct": {
         "label": "Direct",
         "signals": ["logs", "metrics", "traces"],
         "tables": {
-            "logs": os.getenv("OTEL_DIRECT_LOGS_TABLE", "telemetry.otel.direct_otel_logs_v2"),
-            "metrics": os.getenv("OTEL_DIRECT_METRICS_TABLE", "telemetry.otel.direct_otel_metrics"),
-            "traces": os.getenv("OTEL_DIRECT_SPANS_TABLE", "telemetry.otel.direct_otel_spans_v2"),
+            "logs": os.getenv("OTEL_DIRECT_LOGS_TABLE", "bldemos.otel.direct_otel_logs"),
+            "metrics": os.getenv("OTEL_DIRECT_METRICS_TABLE", "bldemos.otel.direct_otel_metrics"),
+            "traces": os.getenv("OTEL_DIRECT_SPANS_TABLE", "bldemos.otel.direct_otel_spans"),
         },
     },
 }
@@ -119,11 +110,7 @@ SELECT
     histogram.attributes
   ) AS attributes,
   COALESCE(gauge.value, sum.value) AS value,
-  COALESCE(
-    gauge.time_unix_nano,
-    sum.time_unix_nano,
-    histogram.time_unix_nano
-  ) AS time_unix_nano,
+  time_unix_nano,
   histogram.count AS hist_count,
   histogram.sum AS hist_sum,
   histogram.min AS hist_min,
@@ -131,11 +118,7 @@ SELECT
   resource.attributes AS resource_attributes
 FROM {table}
 WHERE 1=1
-ORDER BY COALESCE(
-  gauge.time_unix_nano,
-  sum.time_unix_nano,
-  histogram.time_unix_nano
-) DESC NULLS LAST
+ORDER BY time_unix_nano DESC NULLS LAST
 LIMIT {limit}
 """
 

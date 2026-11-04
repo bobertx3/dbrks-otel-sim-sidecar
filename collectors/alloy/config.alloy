@@ -1,9 +1,21 @@
 // Grafana Alloy — Full OTel collector sidecar
-// Receives all signals on localhost:4320 (HTTP), forwards to Databricks.
+// Receives all signals on localhost:4320 (HTTP), forwards to the Databricks Zerobus OTLP endpoint.
 //
-// Environment variables (set by start-sidecars.sh):
-//   DATABRICKS_HOST_BARE  — workspace host without https://
-//   DATABRICKS_TOKEN      — PAT or OAuth token
+// Zerobus tokens are scoped to one table, so each exporter gets its own token.
+// Environment variables (set by start-all.sh):
+//   ZB_TOKEN_ALLOY_SPANS    — token for bldemos.otel.alloy_otel_spans
+//   ZB_TOKEN_ALLOY_LOGS     — token for bldemos.otel.alloy_otel_logs
+//   ZB_TOKEN_ALLOY_METRICS  — token for bldemos.otel.alloy_otel_metrics
+//
+// Previous: workspace REST endpoint (no longer in the docs)
+//   endpoint:  https://fevm-bobertx3-aws-fevm.cloud.databricks.com
+//   paths:     /api/2.0/tracing/otel/v1/traces, /api/2.0/tracing/otel/v1/logs, /api/2.0/otel/v1/metrics
+//   headers:   X-Databricks-UC-Table-Name, X-Databricks-Workspace-Url
+//
+// Current: Zerobus Ingest OTLP endpoint
+//   endpoint:  https://7474645374628060.zerobus.us-east-1.cloud.databricks.com
+//   paths:     /v1/traces, /v1/logs, /v1/metrics
+//   header:    x-databricks-zerobus-table-name
 
 otelcol.receiver.otlp "default" {
   http {
@@ -29,39 +41,36 @@ otelcol.processor.batch "default" {
 
 otelcol.exporter.otlphttp "traces" {
   client {
-    endpoint = "https://" + env("DATABRICKS_HOST_BARE")
+    endpoint = "https://7474645374628060.zerobus.us-east-1.cloud.databricks.com"
     headers = {
-      "Authorization"               = "Bearer " + env("DATABRICKS_TOKEN"),
-      "X-Databricks-UC-Table-Name"  = "telemetry.otel.alloy_otel_spans_v2",
-      "X-Databricks-Workspace-Url"  = "https://" + env("DATABRICKS_HOST_BARE"),
+      "Authorization"                   = "Bearer " + env("ZB_TOKEN_ALLOY_SPANS"),
+      "x-databricks-zerobus-table-name" = "bldemos.otel.alloy_otel_spans",
     }
     tls { insecure = false }
   }
-  traces_endpoint = "https://" + env("DATABRICKS_HOST_BARE") + "/api/2.0/tracing/otel/v1/traces"
+  traces_endpoint = "https://7474645374628060.zerobus.us-east-1.cloud.databricks.com/v1/traces"
 }
 
 otelcol.exporter.otlphttp "logs" {
   client {
-    endpoint = "https://" + env("DATABRICKS_HOST_BARE")
+    endpoint = "https://7474645374628060.zerobus.us-east-1.cloud.databricks.com"
     headers = {
-      "Authorization"               = "Bearer " + env("DATABRICKS_TOKEN"),
-      "X-Databricks-UC-Table-Name"  = "telemetry.otel.alloy_otel_logs_v2",
-      "X-Databricks-Workspace-Url"  = "https://" + env("DATABRICKS_HOST_BARE"),
+      "Authorization"                   = "Bearer " + env("ZB_TOKEN_ALLOY_LOGS"),
+      "x-databricks-zerobus-table-name" = "bldemos.otel.alloy_otel_logs",
     }
     tls { insecure = false }
   }
-  logs_endpoint = "https://" + env("DATABRICKS_HOST_BARE") + "/api/2.0/tracing/otel/v1/logs"
+  logs_endpoint = "https://7474645374628060.zerobus.us-east-1.cloud.databricks.com/v1/logs"
 }
 
 otelcol.exporter.otlphttp "metrics" {
   client {
-    endpoint = "https://" + env("DATABRICKS_HOST_BARE")
+    endpoint = "https://7474645374628060.zerobus.us-east-1.cloud.databricks.com"
     headers = {
-      "Authorization"               = "Bearer " + env("DATABRICKS_TOKEN"),
-      "X-Databricks-UC-Table-Name"  = "telemetry.otel.alloy_otel_metrics",
-      "X-Databricks-Workspace-Url"  = "https://" + env("DATABRICKS_HOST_BARE"),
+      "Authorization"                   = "Bearer " + env("ZB_TOKEN_ALLOY_METRICS"),
+      "x-databricks-zerobus-table-name" = "bldemos.otel.alloy_otel_metrics",
     }
     tls { insecure = false }
   }
-  metrics_endpoint = "https://" + env("DATABRICKS_HOST_BARE") + "/api/2.0/otel/v1/metrics"
+  metrics_endpoint = "https://7474645374628060.zerobus.us-east-1.cloud.databricks.com/v1/metrics"
 }

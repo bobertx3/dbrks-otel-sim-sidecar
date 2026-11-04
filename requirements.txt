@@ -3,6 +3,7 @@ opentelemetry-sdk
 opentelemetry-exporter-otlp-proto-http
 opentelemetry-exporter-otlp-proto-grpc
 python-dotenv
+requests
 PyYAML
 databricks-sql-connector
 databricks-sdk

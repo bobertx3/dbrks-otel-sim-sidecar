@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>OTel Simulator</title>
-    <link rel="stylesheet" href="/static/styles.css?v=19" />
+    <link rel="stylesheet" href="/static/styles.css?v=21" />
   </head>
   <body>
     <div class="app-container">
@@ -186,10 +186,10 @@
               <span class="df-stage-icon">&#9881;</span>
               <span class="df-stage-label">Sidecar Collectors</span>
             </div>
-            <div class="df-stage-subtitle">5 collectors — each handles its native signals</div>
+            <div class="df-stage-subtitle">4 collectors — each handles its native signals</div>
             <ul class="df-value-points">
-              <li><span class="df-vp-dot purple"></span>Same 3 headers, any collector</li>
-              <li><span class="df-vp-dot purple"></span>Add Databricks auth headers</li>
+              <li><span class="df-vp-dot purple"></span>Same 2 headers, any collector</li>
+              <li><span class="df-vp-dot purple"></span>Add table-scoped OAuth token</li>
               <li><span class="df-vp-dot purple"></span>Forward over TLS</li>
             </ul>
             <div class="df-stage-expand" id="df-expand-sidecars">
@@ -221,17 +221,9 @@
                   <div class="df-sub-detail">Logs</div>
                 </div>
               </div>
-              <div class="df-sub-item">
-                <span class="df-sub-dot" style="background:#5bb8f5"></span>
-                <div>
-                  <div class="df-sub-label">OTel Collector <span style="color:var(--muted);font-weight:400">:4323</span></div>
-                  <div class="df-sub-detail">Logs + Metrics + Traces</div>
-                </div>
-              </div>
               <div class="df-sub-footer">
-                <code>Authorization: Bearer &lt;token&gt;</code>
-                <code>X-Databricks-UC-Table-Name: &lt;table&gt;</code>
-                <code>X-Databricks-Workspace-Url: &lt;host&gt;</code>
+                <code>Authorization: Bearer &lt;table-scoped token&gt;</code>
+                <code>x-databricks-zerobus-table-name: &lt;catalog.schema.table&gt;</code>
               </div>
             </div>
           </div>
@@ -265,21 +257,21 @@
                 <span class="df-sub-dot" style="background:var(--app)"></span>
                 <div>
                   <div class="df-sub-label">Traces Endpoint</div>
-                  <div class="df-sub-url">/api/2.0/tracing/otel/v1/traces</div>
+                  <div class="df-sub-url">&lt;workspace-id&gt;.zerobus.&lt;region&gt;…/v1/traces</div>
                 </div>
               </div>
               <div class="df-sub-item">
                 <span class="df-sub-dot" style="background:var(--infra)"></span>
                 <div>
                   <div class="df-sub-label">Logs Endpoint</div>
-                  <div class="df-sub-url">/api/2.0/tracing/otel/v1/logs</div>
+                  <div class="df-sub-url">&lt;workspace-id&gt;.zerobus.&lt;region&gt;…/v1/logs</div>
                 </div>
               </div>
               <div class="df-sub-item">
                 <span class="df-sub-dot" style="background:var(--network)"></span>
                 <div>
                   <div class="df-sub-label">Metrics Endpoint</div>
-                  <div class="df-sub-url">/api/2.0/otel/v1/metrics</div>
+                  <div class="df-sub-url">&lt;workspace-id&gt;.zerobus.&lt;region&gt;…/v1/metrics</div>
                 </div>
               </div>
             </div>
@@ -353,7 +345,7 @@
             <ul class="df-value-points">
               <li><span class="df-vp-dot blue"></span>OTLP/HTTP Exporters</li>
               <li><span class="df-vp-dot blue"></span>Traces, Logs &amp; Metrics</li>
-              <li><span class="df-vp-dot blue"></span>Direct to Databricks OTLP</li>
+              <li><span class="df-vp-dot blue"></span>Direct to Zerobus OTLP</li>
             </ul>
           </div>
 
@@ -401,8 +393,8 @@
             </div>
             <div class="df-stage-subtitle">Direct tables — no sidecar prefix</div>
             <ul class="df-value-points">
-              <li><span class="df-vp-dot green"></span>direct_otel_spans_v2</li>
-              <li><span class="df-vp-dot green"></span>direct_otel_logs_v2</li>
+              <li><span class="df-vp-dot green"></span>direct_otel_spans</li>
+              <li><span class="df-vp-dot green"></span>direct_otel_logs</li>
               <li><span class="df-vp-dot green"></span>direct_otel_metrics</li>
             </ul>
           </div>

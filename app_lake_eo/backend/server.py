@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from pathlib import Path
@@ -34,6 +35,30 @@ DATABRICKS_HOST = os.getenv("DATABRICKS_HOST", "")
 WAREHOUSE_ID = os.getenv("DATABRICKS_WAREHOUSE_ID", "")
 
 
+def _to_jsonable(value: Any) -> Any:
+    """Normalize SQL driver container values without relying on truthiness."""
+    if value is None:
+        return None
+    if hasattr(value, "as_py"):
+        return _to_jsonable(value.as_py())
+    if isinstance(value, dict):
+        return {str(k): _to_jsonable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_to_jsonable(v) for v in value]
+    if hasattr(value, "tolist") and not isinstance(value, (str, bytes, bytearray)):
+        return _to_jsonable(value.tolist())
+    return value
+
+
+def _stringify_sql_value(value: Any) -> str:
+    normalized = _to_jsonable(value)
+    if normalized is None:
+        return ""
+    if isinstance(normalized, (dict, list)):
+        return json.dumps(normalized, default=str)
+    return str(normalized)
+
+
 def _resolve_sql_host() -> str:
     raw = os.getenv("DATABRICKS_HOST", "").strip()
     if not raw:
@@ -62,7 +87,7 @@ def _run_sql(query: str) -> list[dict[str, Any]]:
         else:
             from databricks.sdk.core import Config as SdkConfig
             sdk_cfg = SdkConfig()
-            conn = dbsql.connect(server_hostname=host, http_path=http_path, credentials_provider=sdk_cfg.authenticate)
+            conn = dbsql.connect(server_hostname=host, http_path=http_path, credentials_provider=lambda: sdk_cfg.authenticate)
         with conn:
             with conn.cursor() as cursor:
                 cursor.execute(query)
@@ -128,8 +153,7 @@ def get_logs(collector: str, range: str = Query("30m", alias="range"), limit: in
     rows = _run_sql(logs_query(table, minutes, limit))
     for r in rows:
         r["time"] = str(r.get("time") or "")
-        if r.get("attributes"):
-            r["attributes"] = str(r["attributes"])
+        r["attributes"] = _stringify_sql_value(r.get("attributes"))
     return {"collector": collector, "logs": rows}
 
 
@@ -141,10 +165,8 @@ def get_metrics(collector: str, range: str = Query("30m", alias="range"), limit:
     minutes = parse_range(range)
     rows = _run_sql(metrics_query(table, minutes, limit))
     for r in rows:
-        if r.get("attributes"):
-            r["attributes"] = str(r["attributes"])
-        if r.get("resource_attributes"):
-            r["resource_attributes"] = str(r["resource_attributes"])
+        r["attributes"] = _stringify_sql_value(r.get("attributes"))
+        r["resource_attributes"] = _stringify_sql_value(r.get("resource_attributes"))
     return {"collector": collector, "metrics": rows}
 
 
@@ -157,10 +179,8 @@ def get_traces(collector: str, range: str = Query("30m", alias="range"), limit: 
     rows = _run_sql(traces_query(table, minutes, limit))
     for r in rows:
         r["time"] = str(r.get("time") or "")
-        if r.get("attributes"):
-            r["attributes"] = str(r["attributes"])
-        if r.get("status"):
-            r["status"] = str(r["status"])
+        r["attributes"] = _stringify_sql_value(r.get("attributes"))
+        r["status"] = _stringify_sql_value(r.get("status"))
     return {"collector": collector, "traces": rows}
 
 
@@ -181,8 +201,8 @@ def get_trace_detail(collector: str, trace_id: str):
             "service_name": r.get("service_name"),
             "start_time_unix_nano": r.get("start_time_unix_nano"),
             "end_time_unix_nano": r.get("end_time_unix_nano"),
-            "status": str(r.get("status") or ""),
-            "attributes": str(r.get("attributes") or ""),
-            "events": str(r.get("events") or ""),
+            "status": _stringify_sql_value(r.get("status")),
+            "attributes": _stringify_sql_value(r.get("attributes")),
+            "events": _stringify_sql_value(r.get("events")),
         })
     return {"trace_id": trace_id, "collector": collector, "spans": spans}

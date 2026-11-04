@@ -1,9 +1,8 @@
-# Vector — Logs + Metrics collector sidecar
-# Receives OTLP on localhost:4322, forwards logs and metrics to Databricks.
+# Vector — Logs collector sidecar
+# Receives OTLP on localhost:4322, forwards logs to the Databricks Zerobus OTLP endpoint.
 #
-# Environment variables (set by start-sidecars.sh):
-#   DATABRICKS_HOST_BARE  — workspace host without https://
-#   DATABRICKS_TOKEN      — PAT or OAuth token
+# Environment variables (set by start-all.sh):
+#   ZB_TOKEN_VECTOR_LOGS — Zerobus token scoped to bldemos.otel.vector_otel_logs
 
 sources:
   otlp:
@@ -19,14 +18,23 @@ sinks:
   databricks_logs:
     type: http
     inputs: ["otlp.logs"]
-    uri: "https://${DATABRICKS_HOST_BARE}/api/2.0/tracing/otel/v1/logs"
+
+    # Previous: workspace REST endpoint (no longer in the docs)
+    # uri: "https://fevm-bobertx3-aws-fevm.cloud.databricks.com/api/2.0/tracing/otel/v1/logs"
+
+    # Current: Zerobus Ingest OTLP endpoint
+    uri: "https://7474645374628060.zerobus.us-east-1.cloud.databricks.com/v1/logs"
     method: post
     encoding:
       codec: otlp
     request:
       headers:
-        Authorization: "Bearer ${DATABRICKS_TOKEN}"
-        X-Databricks-UC-Table-Name: "telemetry.otel.vector_otel_logs_v2"
-        X-Databricks-Workspace-Url: "https://${DATABRICKS_HOST_BARE}"
+        Authorization: "Bearer ${ZB_TOKEN_VECTOR_LOGS}"
         Content-Type: "application/x-protobuf"
 
+        # Previous headers (workspace REST endpoint)
+        # X-Databricks-UC-Table-Name: "bldemos.otel.vector_otel_logs"
+        # X-Databricks-Workspace-Url: "https://fevm-bobertx3-aws-fevm.cloud.databricks.com"
+
+        # Current header (Zerobus)
+        x-databricks-zerobus-table-name: "bldemos.otel.vector_otel_logs"

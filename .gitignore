@@ -37,6 +37,12 @@ dist/
 
 # Collector binaries (downloaded locally)
 collectors/bin/
+collectors/telegraf/telegraf
+collectors/fluent-bit/fluent-bit
+
+# Local editor/agent settings
+.isaac/
+.vscode/
 
 # Alloy data directory
 data-alloy/

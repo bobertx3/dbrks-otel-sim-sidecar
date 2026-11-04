@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Install Fluent Bit, Telegraf, Grafana Alloy, Vector, and OTel Collector
+# Install Fluent Bit, Telegraf, Grafana Alloy, and Vector
 # for local sidecar collection. Prefers Homebrew on macOS.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -82,22 +82,6 @@ install_vector() {
     info "Vector installed: $(vector --version 2>/dev/null | head -1)"
 }
 
-# --- OTel Collector ---
-install_otel_collector() {
-    if [[ -x "$BIN_DIR/otelcol-contrib" ]] || check_cmd otelcol-contrib; then
-        info "OTel Collector already installed"
-        return
-    fi
-    info "Downloading OTel Collector Contrib binary..."
-    local arch="arm64"
-    [[ "$(uname -m)" == "x86_64" ]] && arch="amd64"
-    local version="0.114.0"
-    local url="https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/v${version}/otelcol-contrib_${version}_darwin_${arch}.tar.gz"
-    curl -sL "$url" -o "$BIN_DIR/otelcol.tar.gz"
-    (cd "$BIN_DIR" && tar xzf otelcol.tar.gz otelcol-contrib && rm otelcol.tar.gz && chmod +x otelcol-contrib)
-    info "OTel Collector installed: $($BIN_DIR/otelcol-contrib --version 2>&1 | head -1)"
-}
-
 echo ""
 info "=== Installing OTel sidecar collectors ==="
 echo ""
@@ -106,8 +90,7 @@ install_fluent_bit
 install_telegraf
 install_alloy
 install_vector
-install_otel_collector
 
 echo ""
-info "=== All 5 collectors installed ==="
-info "Run ./start-sidecars.sh to launch the full stack."
+info "=== All 4 collectors installed ==="
+info "Run ./start-all.sh to launch the full stack."
