@@ -31,6 +31,9 @@ pipeline:
       header:
         - Authorization Bearer ${DATABRICKS_TOKEN}
         - x-databricks-zerobus-table-name bldemos.otel.fluentbit_otel_logs
+
+
+        
       # Previous: workspace REST endpoint (no longer in the docs)
       # host: fevm-bobertx3-aws-fevm.cloud.databricks.com
       # logs_uri: /api/2.0/tracing/otel/v1/logs
